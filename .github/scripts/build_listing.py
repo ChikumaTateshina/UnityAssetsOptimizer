@@ -76,30 +76,37 @@ def build(repo, token):
     return listing, pages_url
 
 
+TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pages", "index.template.html")
+
+
+def version_key(v):
+    return [int(x) if x.isdigit() else -1 for x in v.split("-")[0].split(".")]
+
+
 def render_html(listing, pages_url, repo):
     listing_url = pages_url + "index.json"
     vcc = "vcc://vpm/addRepo?url=" + urllib.parse.quote(listing_url, safe="")
     rows = []
+    latest = "-"
     for pkg, entry in listing["packages"].items():
-        for version in sorted(entry["versions"], key=lambda v: [int(x) if x.isdigit() else x for x in v.replace("-", ".").split(".")], reverse=True):
+        versions = sorted(entry["versions"], key=version_key, reverse=True)
+        if versions and pkg == PACKAGE_NAME:
+            latest = versions[0]
+        for version in versions:
             m = entry["versions"][version]
-            rows.append(f"<tr><td>{html.escape(m.get('displayName', pkg))}</td><td>{html.escape(version)}</td>"
-                        f"<td><a href=\"{html.escape(m['url'])}\">zip</a></td></tr>")
-    return f"""<!doctype html>
-<html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{html.escape(LISTING_NAME)}</title>
-<style>body{{font-family:system-ui,sans-serif;max-width:720px;margin:2rem auto;padding:0 16px;line-height:1.6}}
-code{{background:#f2f2f2;padding:2px 4px;border-radius:4px;word-break:break-all}}
-a.button{{display:inline-block;padding:.6rem 1rem;background:#2563eb;color:#fff;border-radius:6px;text-decoration:none}}
-table{{border-collapse:collapse;width:100%}}td,th{{border-bottom:1px solid #ddd;padding:.4rem;text-align:left}}</style></head>
-<body><h1>{html.escape(LISTING_NAME)}</h1>
-<p><a class="button" href="{html.escape(vcc)}">VCC に追加</a></p>
-<p>手動で追加する場合は VCC の Settings → Packages → Add Repository に次の URL を入力してください。</p>
-<p><code>{html.escape(listing_url)}</code></p>
-<table><tr><th>Package</th><th>Version</th><th>Download</th></tr>{''.join(rows)}</table>
-<p><a href="https://github.com/{html.escape(repo)}">GitHub</a></p>
-</body></html>
-"""
+            rows.append("<tr><td>" + html.escape(m.get("displayName", pkg)) + "</td><td>" + html.escape(version) +
+                        "</td><td><a href=\"" + html.escape(m["url"]) + "\">zip</a></td></tr>")
+    page = open(TEMPLATE, encoding="utf-8").read()
+    values = {
+        "{{LISTING_URL}}": html.escape(listing_url),
+        "{{VCC_URL}}": html.escape(vcc),
+        "{{REPO}}": html.escape(repo),
+        "{{LATEST_VERSION}}": html.escape(latest),
+        "{{VERSION_ROWS}}": "\n        ".join(rows) or "<tr><td colspan=\"3\">まだ公開されたバージョンはありません</td></tr>",
+    }
+    for key, value in values.items():
+        page = page.replace(key, value)
+    return page
 
 
 def main():

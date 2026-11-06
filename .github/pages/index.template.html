@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VRChat Asset Optimizer</title>
+<meta name="description" content="VRChat のアバター・ワールド向けの非破壊アセット最適化ツール（Unity エディタ拡張）。VCC から導入できます。">
+<style>
+  :root {
+    --bg: #f7f8fa;
+    --surface: #ffffff;
+    --text: #1d2330;
+    --muted: #5b6475;
+    --border: #e1e5ec;
+    --accent: #3d5afe;
+    --accent-text: #ffffff;
+    --accent-soft: #eef1ff;
+    --code-bg: #f0f2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151c;
+      --surface: #1a1f29;
+      --text: #e6e9ef;
+      --muted: #9aa3b5;
+      --border: #2b3240;
+      --accent: #7c8cff;
+      --accent-text: #0e1220;
+      --accent-soft: #232a40;
+      --code-bg: #232937;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", "Meiryo", sans-serif;
+    line-height: 1.7;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 0 16px; }
+  header { padding: 56px 0 32px; text-align: center; }
+  h1 { font-size: clamp(1.8rem, 5vw, 2.6rem); margin: 0 0 8px; letter-spacing: .01em; }
+  .tagline { color: var(--muted); margin: 0 auto 28px; max-width: 620px; }
+  .badge {
+    display: inline-block; font-size: .8rem; color: var(--muted);
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; margin-bottom: 16px;
+  }
+  .actions { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 12px 22px; border-radius: 10px; font-weight: 600; font-size: 1rem;
+    text-decoration: none; border: 1px solid transparent; cursor: pointer; font-family: inherit;
+  }
+  .btn-primary { background: var(--accent); color: var(--accent-text); }
+  .btn-primary:hover { filter: brightness(1.08); }
+  .btn-secondary { background: var(--surface); color: var(--text); border-color: var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+  .url {
+    margin: 18px auto 0; max-width: 620px; display: flex; gap: 8px; align-items: stretch;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  }
+  .url code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 8px; font-size: .9rem; background: transparent; }
+  .url button { padding: 6px 14px; font-size: .9rem; }
+  .hint { color: var(--muted); font-size: .85rem; margin-top: 8px; }
+  section { padding: 28px 0; border-top: 1px solid var(--border); }
+  h2 { font-size: 1.3rem; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+  .card h3 { font-size: 1rem; margin: 0 0 6px; }
+  .card p { margin: 0; color: var(--muted); font-size: .92rem; }
+  ol.steps { padding-left: 1.3em; margin: 0; }
+  ol.steps li { margin-bottom: 8px; }
+  ul.plain { padding-left: 1.2em; margin: 0; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+  table { width: 100%; border-collapse: collapse; font-size: .92rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  a { color: var(--accent); }
+  details summary { cursor: pointer; color: var(--muted); }
+  footer { padding: 28px 0 48px; color: var(--muted); font-size: .85rem; text-align: center; border-top: 1px solid var(--border); }
+  footer a { margin: 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="badge">最新版 v{{LATEST_VERSION}}</div>
+    <h1>VRChat Asset Optimizer</h1>
+    <p class="tagline">VRChat のアバター・ワールドを軽量化する Unity エディタ拡張です。元のデータは一切変更せず、最適化した Prefab を別に生成します。</p>
+    <div class="actions">
+      <a class="btn btn-primary" href="{{VCC_URL}}">VCC に追加</a>
+      <a class="btn btn-secondary" href="https://github.com/{{REPO}}">GitHub</a>
+    </div>
+    <div class="url">
+      <code id="listing-url">{{LISTING_URL}}</code>
+      <button class="btn btn-secondary" type="button" id="copy">コピー</button>
+    </div>
+    <p class="hint">ボタンが反応しない場合は、VCC の Settings → Packages → Add Repository に上の URL を貼り付けてください。</p>
+  </header>
+
+  <section>
+    <h2>できること</h2>
+    <div class="grid">
+      <div class="card"><h3>テクスチャアトラス化</h3><p>複数の Material を1枚のテクスチャにまとめます。Unity 標準シェーダー・lilToon・Poiyomi Toon に対応。</p></div>
+      <div class="card"><h3>Material・メッシュの統合</h3><p>同じ設定の Material を統合し、条件を満たす Mesh / SkinnedMesh を結合します。</p></div>
+      <div class="card"><h3>テクスチャ圧縮</h3><p>非圧縮テクスチャの圧縮や解像度の制限を、コピーを作って適用します。</p></div>
+      <div class="card"><h3>ポリゴン削減・LOD</h3><p>許容誤差を超えない範囲で三角形を減らし、LOD を生成します。</p></div>
+      <div class="card"><h3>Performance Rank</h3><p>VRChat SDK の公式評価で、処理前・予測・処理後のランクを PC / Android / iOS 別に表示します。</p></div>
+      <div class="card"><h3>Android / iOS 版の生成</h3><p>モバイル用シェーダーへ変換した派生 Prefab を作り、SDK の検証 API で確認します。</p></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>安心して使うための設計</h2>
+    <ul class="plain">
+      <li>元のシーン・Prefab・Mesh・Material・Texture は変更しません。生成物は <code>Assets/VAOGenerated/</code> に出力されます。</li>
+      <li>実行前にスナップショットを取り、失敗やキャンセル時は生成途中のデータを破棄します。</li>
+      <li>対応できない設定は推測で変換せず、理由を表示してスキップします。</li>
+      <li>処理前・予測・処理後の数値を比較でき、算出できない値は「算出不可」と表示します。</li>
+      <li>NDMF が入っていれば、アップロード時だけ最適化を適用するモードも使えます。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>導入と使い方</h2>
+    <ol class="steps">
+      <li>上の「VCC に追加」を押して、リポジトリを VCC に追加します。</li>
+      <li>VCC でプロジェクトの <b>Manage Project</b> を開き、<b>VRChat Asset Optimizer</b> を追加します。</li>
+      <li>Unity で <code>Tools &gt; VRChat Asset Optimizer &gt; Open</code> を開き、対象を選んで「解析」→「Dry Run」→「最適化を実行」の順に進めます。</li>
+    </ol>
+    <p class="hint">対応環境: Unity 2022.3（Built-in Render Pipeline）。詳しい対応状況は <a href="https://github.com/{{REPO}}/blob/main/Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md">互換性の一覧</a> を参照してください。</p>
+  </section>
+
+  <section>
+    <details>
+      <summary>配布中のバージョン</summary>
+      <table>
+        <tr><th>パッケージ</th><th>バージョン</th><th>ダウンロード</th></tr>
+        {{VERSION_ROWS}}
+      </table>
+    </details>
+  </section>
+
+  <footer>
+    <a href="https://github.com/{{REPO}}">GitHub</a>
+    <a href="https://github.com/{{REPO}}/releases">Releases</a>
+    <a href="https://github.com/{{REPO}}/blob/main/LICENSE">MIT License</a>
+  </footer>
+</div>
+<script>
+  (function () {
+    var button = document.getElementById("copy");
+    var url = document.getElementById("listing-url").textContent;
+    button.addEventListener("click", function () {
+      var done = function () {
+        button.textContent = "コピーしました";
+        setTimeout(function () { button.textContent = "コピー"; }, 1600);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(done, function () { window.prompt("URL をコピーしてください", url); });
+      } else {
+        window.prompt("URL をコピーしてください", url);
+      }
+    });
+  })();
+</script>
+</body>
+</html>
