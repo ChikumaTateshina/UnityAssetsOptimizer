@@ -41,19 +41,19 @@ namespace ChikumaTateshina.AssetsOptimizer
         {
             Def(FeatureIds.Atlas, "アトラス化", true, true, 1, "互換グループのみ"),
             Def(FeatureIds.MaterialDedupe, "同一Material統合", true, true, 1, "プロパティ・描画状態の等価性確認"),
-            Def(FeatureIds.TextureDedupe, "重複Texture検出/統合", true, true, 2, "内容・Importer設定を考慮"),
-            Def(FeatureIds.TextureCompression, "テクスチャ圧縮", true, true, 2, "ターゲット別設定（生成テクスチャのみ）"),
-            Def(FeatureIds.TextureDownscale, "自動解像度削減", false, false, 2, "画質影響（生成テクスチャのみ）"),
+            Def(FeatureIds.TextureDedupe, "重複Texture検出/統合", true, true, 2, "内容・Importer設定を考慮（Material統合に反映）"),
+            Def(FeatureIds.TextureCompression, "テクスチャ圧縮", true, true, 2, "ターゲット別設定（原本はコピーを生成して適用）"),
+            Def(FeatureIds.TextureDownscale, "自動解像度削減", false, false, 2, "画質影響（原本はコピーを生成して適用）"),
             Def(FeatureIds.MeshCombine, "メッシュ結合", true, false, 2, "参照・Culling保護"),
             Def(FeatureIds.VertexAttributeStrip, "不要頂点属性削除", true, true, 2, "使用状況が不明ならスキップ"),
-            Def(FeatureIds.MeshCompression, "Mesh Compression", true, true, 2, "形状誤差を検証"),
+            Def(FeatureIds.MeshCompression, "Mesh Compression", true, true, 2, "誤差検証ができないため実行しない"),
             Def(FeatureIds.PolygonReduction, "ポリゴン削減", false, false, 4, "Phase 4"),
             Def(FeatureIds.LodGeneration, "LOD生成", false, false, 4, "Phase 4"),
             Def(FeatureIds.ColliderSimplify, "Collider簡略化", false, null, 4, "Phase 4"),
             Def(FeatureIds.StaticBatching, "Static Batching支援", true, null, 3, "競合判定"),
             Def(FeatureIds.GpuInstancing, "GPU Instancing支援", true, false, 3, "競合判定"),
             Def(FeatureIds.LightmapUv, "Lightmap UV再生成", false, null, 3, "ベイクへの影響"),
-            Def(FeatureIds.ShaderReplace, "Shader自動置換", false, false, 3, "専用アダプターのみ"),
+            Def(FeatureIds.ShaderReplace, "Shader自動置換", false, false, 3, "Mobile Conversion で提供"),
         };
 
         public static FeatureDefinition Get(string id)

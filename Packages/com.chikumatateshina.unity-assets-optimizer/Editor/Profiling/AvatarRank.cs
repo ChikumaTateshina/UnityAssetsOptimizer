@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using UnityEngine;
 using UnityEngine.Animations;
 
@@ -65,20 +66,146 @@ namespace ChikumaTateshina.AssetsOptimizer
     }
 
     /// <summary>
-    /// SDK 公式評価器。公開された安定 API の存在と仕様を検証するまで評価しない。
+    /// SDK 公式評価器。VRChat SDK（3.9.0 で確認）の公開クラス
+    /// VRC.SDKBase.Validation.Performance.AvatarPerformance.CalculatePerformanceStats と
+    /// AvatarPerformanceStats.GetPerformanceRatingForCategory / GetStatLevelForRating をリフレクションで呼ぶ
+    /// （SDK へのコンパイル時依存を持たない）。API が見つからない場合は unavailable。
     /// </summary>
     public sealed class SdkOfficialRankProvider : IVrcRankProvider
     {
+        const string Ns = "VRC.SDKBase.Validation.Performance.";
+
         public string Id => "sdk-official";
+
+        static Type FindType(string fullName) =>
+            AppDomain.CurrentDomain.GetAssemblies().Select(a => a.GetType(fullName, false)).FirstOrDefault(t => t != null);
+
+        public static bool IsAvailable(out string reason)
+        {
+            reason = null;
+            if (FindType(Ns + "AvatarPerformance") == null || FindType(Ns + "Stats.AvatarPerformanceStats") == null)
+            {
+                reason = "VRChat SDK の評価 API（AvatarPerformance）が見つかりません。";
+                return false;
+            }
+            return true;
+        }
 
         public RankResult Evaluate(IList<GameObject> roots, VrcPlatform platform, bool buildTimeToolsPresent)
         {
-            var result = new RankResult { platform = platform.ToString(), status = RankStatus.Unavailable };
-            result.reasons.Add(SdkInfo.Version("com.vrchat.avatars") == null
-                ? "VRChat Avatars SDK が見つかりません。"
-                : "SDK の公開評価 API は未検証のため呼び出しません（非公開 API には依存しない方針）。");
-            result.statusLabel = result.status.Label();
-            return result;
+            var result = new RankResult { platform = platform.ToString(), status = RankStatus.Unavailable, rank = "算出不可" };
+            try
+            {
+                if (!IsAvailable(out var reason))
+                {
+                    result.reasons.Add(reason);
+                    return Finish(result);
+                }
+                if (roots.Count != 1)
+                {
+                    result.reasons.Add("Avatar は1体ずつ評価します（選択ルート " + roots.Count + " 個）。");
+                    return Finish(result);
+                }
+                var perfType = FindType(Ns + "AvatarPerformance");
+                var statsType = FindType(Ns + "Stats.AvatarPerformanceStats");
+                var categoryType = FindType(Ns + "AvatarPerformanceCategory");
+                var ratingType = FindType(Ns + "PerformanceRating");
+                bool mobile = platform != VrcPlatform.PC;
+
+                var stats = Activator.CreateInstance(statsType, new object[] { mobile });
+                var calc = perfType.GetMethod("CalculatePerformanceStats", new[] { typeof(string), typeof(GameObject), statsType, typeof(bool) });
+                if (calc == null) throw new MissingMethodException("AvatarPerformance.CalculatePerformanceStats");
+                calc.Invoke(null, new object[] { roots[0].name, roots[0], stats, mobile });
+
+                var getRating = statsType.GetMethod("GetPerformanceRatingForCategory", new[] { categoryType });
+                var displayName = statsType.GetMethod("GetPerformanceRatingDisplayName", BindingFlags.Public | BindingFlags.Static);
+                var levelFor = statsType.GetMethod("GetStatLevelForRating", BindingFlags.Public | BindingFlags.Static);
+                string Display(object rating) => displayName != null ? (string)displayName.Invoke(null, new[] { rating }) : rating.ToString();
+
+                var overall = getRating.Invoke(stats, new[] { Enum.Parse(categoryType, "Overall") });
+                result.rank = Display(overall);
+
+                var rankNames = new[] { "Excellent", "Good", "Medium", "Poor" };
+                var levels = rankNames.Select(n => levelFor?.Invoke(null, new object[] { Enum.Parse(ratingType, n), mobile })).ToArray();
+
+                foreach (var name in Enum.GetNames(categoryType))
+                {
+                    if (name == "Overall" || name.EndsWith("Count", StringComparison.Ordinal) && name.StartsWith("AvatarPerformanceCategory", StringComparison.Ordinal)) continue;
+                    var category = Enum.Parse(categoryType, name);
+                    var rating = getRating.Invoke(stats, new[] { category });
+                    var fieldName = char.ToLowerInvariant(name[0]) + name.Substring(1);
+                    var value = ReadNumber(stats, fieldName);
+                    var thresholds = levels.Select(l => l == null ? null : ReadNumber(l, fieldName)).ToArray();
+                    var row = new RankStatRow
+                    {
+                        key = name,
+                        label = name,
+                        value = value ?? 0,
+                        rank = Display(rating),
+                        threshold = thresholds.All(t => t.HasValue) ? string.Join(" / ", thresholds.Select(t => t.Value.ToString(CultureInfo.InvariantCulture))) : "—",
+                        excess = value.HasValue && thresholds[0].HasValue && value.Value > thresholds[0].Value
+                            ? "+" + (value.Value - thresholds[0].Value).ToString(CultureInfo.InvariantCulture) : (value.HasValue && thresholds[0].HasValue ? "0" : "—"),
+                    };
+                    if (!value.HasValue) row.label += "（値は SDK 内部形式）";
+                    result.rows.Add(row);
+                }
+
+                result.status = buildTimeToolsPresent ? RankStatus.Incomplete : RankStatus.Official;
+                result.ruleSetId = "VRChat SDK " + (SdkInfo.Version("com.vrchat.avatars") ?? "?") + (mobile ? " (Mobile)" : " (PC)");
+                result.reasons.Add("VRChat SDK の評価 API で算出（" + (mobile ? "モバイル閾値" : "PC 閾値") + "）。閾値列は Excellent / Good / Medium / Poor の上限。");
+                if (platform == VrcPlatform.iOS)
+                    result.reasons.Add("SDK の評価はモバイル共通（SDK 内の閾値リソースは Windows と Quest のみ）のため、iOS にも同じモバイル閾値を適用しています。");
+                if (buildTimeToolsPresent)
+                    result.reasons.Add("ビルド時変換ツールを検出。ビルド後の構成ではないため評価不完全です。");
+            }
+            catch (Exception e)
+            {
+                result.status = RankStatus.Unavailable;
+                result.rank = "算出不可";
+                result.reasons.Add("SDK 評価 API の呼び出しに失敗しました: " + (e.InnerException ?? e).Message);
+            }
+            return Finish(result);
+        }
+
+        static RankResult Finish(RankResult r)
+        {
+            r.statusLabel = r.status.Label();
+            return r;
+        }
+
+        /// <summary>
+        /// フィールド/プロパティの数値（int / float / Nullable）を読む。見つからなければ
+        /// 先頭一致するフィールドの入れ子（例: PhysBoneComponentCount → physBone.componentCount）を探す。
+        /// </summary>
+        static double? ReadNumber(object obj, string name)
+        {
+            var direct = ReadDirect(obj, name);
+            if (direct.HasValue) return direct;
+            foreach (var f in obj.GetType().GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                if (name.Length <= f.Name.Length || !name.StartsWith(f.Name, StringComparison.OrdinalIgnoreCase)) continue;
+                var nested = f.GetValue(obj);
+                if (nested == null || nested.GetType().IsPrimitive) continue;
+                var rest = name.Substring(f.Name.Length);
+                var value = ReadDirect(nested, char.ToLowerInvariant(rest[0]) + rest.Substring(1));
+                if (value.HasValue) return value;
+            }
+            return null;
+        }
+
+        static double? ReadDirect(object obj, string name)
+        {
+            var type = obj.GetType();
+            object v = type.GetField(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj)
+                       ?? type.GetProperty(name, BindingFlags.Public | BindingFlags.Instance)?.GetValue(obj);
+            switch (v)
+            {
+                case int i: return i;
+                case float f: return f;
+                case double d: return d;
+                case long l: return l;
+                default: return null;
+            }
         }
     }
 

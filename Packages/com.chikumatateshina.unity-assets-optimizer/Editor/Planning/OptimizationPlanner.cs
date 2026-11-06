@@ -12,7 +12,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             var plans = new List<OperationPlan>();
             foreach (var op in ordered)
             {
-                var mode = context.Settings.GetMode(op.Id);
+                var mode = context.ModeFor(op.Id);
                 OperationPlan plan;
                 if (mode == ExecutionMode.Off || !op.Capabilities.Implemented)
                 {
@@ -75,11 +75,11 @@ namespace ChikumaTateshina.AssetsOptimizer
             }
             if (!op.Capabilities.Implemented)
             {
-                d.reasons.Add("未実装の処理です（Phase " + op.Capabilities.Phase + "）。FORCE でも実行しません。");
+                d.reasons.Add((op is UnimplementedOperation u ? u.Reason : "未実装の処理です（Phase " + op.Capabilities.Phase + "）。") + " FORCE でも実行しません。");
                 ExcludeAll(plan);
                 return;
             }
-            if (!context.Settings.IsApplicable(op.Id))
+            if (!context.IsApplicable(op.Id))
             {
                 d.reasons.Add("このプリセットでは対象外です。");
                 ExcludeAll(plan);

@@ -55,6 +55,12 @@ namespace ChikumaTateshina.AssetsOptimizer
         public List<OutputAsset> outputs = new List<OutputAsset>();
         public List<string> validation = new List<string>();
         public IntegrityReport integrity;
+        public string runKind = "Optimize";
+        public List<string> outputKinds = new List<string>();
+        public List<string> structuralChanges = new List<string>();
+        public VisualDiffResult predictedVisualDiff;
+        public VisualDiffResult visualDiff;
+        public ConversionReport conversion;
         public string restoreState;
         public List<string> nonDeterministicNotes = new List<string>();
         public RunLog log = new RunLog();
@@ -164,6 +170,29 @@ namespace ChikumaTateshina.AssetsOptimizer
                 sb.AppendLine();
             }
 
+            if (r.conversion != null && !string.IsNullOrEmpty(r.conversion.platform))
+            {
+                sb.AppendLine("## " + r.conversion.platform + " 変換結果");
+                sb.AppendLine("- 状態: " + r.conversion.StateLabel + " / 実機検証: " + (r.conversion.deviceVerified ? "済" : "未実施"));
+                foreach (var reason in r.conversion.reasons) sb.AppendLine("- " + reason);
+                foreach (var c in r.conversion.removedBySdk) sb.AppendLine("  - SDK が削除: " + Escape(c));
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("## 外観の参考比較（画像差分）");
+            sb.AppendLine("画像差分は参考値であり、機能同等の証明ではありません。");
+            sb.AppendLine("- 予測（Dry Run）: " + DescribeDiff(r.predictedVisualDiff));
+            sb.AppendLine("- 処理後: " + DescribeDiff(r.visualDiff));
+            sb.AppendLine();
+
+            if (r.outputKinds.Count > 0 || r.structuralChanges.Count > 0)
+            {
+                sb.AppendLine("## 出力形式と構造変更");
+                foreach (var k in r.outputKinds) sb.AppendLine("- " + Escape(k));
+                foreach (var c in r.structuralChanges) sb.AppendLine("- " + Escape(c));
+                sb.AppendLine();
+            }
+
             sb.AppendLine("## 生成物");
             foreach (var o in r.outputs) sb.AppendLine("- `" + o.path + "`（" + o.kind + ", " + o.operationId + "）");
             sb.AppendLine();
@@ -191,6 +220,14 @@ namespace ChikumaTateshina.AssetsOptimizer
                 foreach (var e in r.log.entries) sb.AppendLine("- [" + e.level + "] " + e.source + ": " + Escape(e.message));
             }
             return sb.ToString();
+        }
+
+        public static string DescribeDiff(VisualDiffResult d)
+        {
+            if (d == null || (!d.available && string.IsNullOrEmpty(d.reason))) return "未計測";
+            if (!d.available) return "取得不可（" + d.reason + "）";
+            return "平均差 " + (d.meanAbsDiff * 100).ToString("0.00", CultureInfo.InvariantCulture) + "% / 変化画素 " +
+                   (d.changedPixelRatio * 100).ToString("0.00", CultureInfo.InvariantCulture) + "%（" + d.conditions + "）";
         }
 
         static string Cell(Metric m)

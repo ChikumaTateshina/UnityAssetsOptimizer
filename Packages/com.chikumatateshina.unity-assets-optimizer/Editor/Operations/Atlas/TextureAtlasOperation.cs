@@ -170,17 +170,17 @@ namespace ChikumaTateshina.AssetsOptimizer
                 return Reject(cand, SupportState.Unsupported, "未対応シェーダー: " + (mat.shader != null ? mat.shader.name : "(none)"));
 
             var shader = mat.shader;
-            var channelProps = new HashSet<string>(cand.Adapter.Channels.Select(c => c.Property));
+            var known = new HashSet<string>(cand.Adapter.Channels.Select(c => c.Property)
+                .Concat(cand.Adapter.SharedTextures).Concat(cand.Adapter.ForbiddenTextures));
             for (int i = 0; i < shader.GetPropertyCount(); i++)
             {
                 if (shader.GetPropertyType(i) != ShaderPropertyType.Texture) continue;
                 var name = shader.GetPropertyName(i);
-                if (channelProps.Contains(name) || mat.GetTexture(name) == null) continue;
-                return Reject(cand, SupportState.Unsupported, "アトラス非対応のテクスチャプロパティに値あり: " + name);
+                if (known.Contains(name) || mat.GetTexture(name) == null) continue;
+                return Reject(cand, SupportState.Unsupported, "アダプター未定義のテクスチャプロパティに値あり: " + name);
             }
-            foreach (var forbidden in cand.Adapter.ForbiddenTextures)
-                if (mat.HasProperty(forbidden) && mat.GetTexture(forbidden) != null)
-                    return Reject(cand, SupportState.Unsupported, "Detail マップ等（別UV/別ST）は未対応: " + forbidden);
+            var precondition = ShaderAdapterRegistry.CheckPreconditions(cand.Adapter, mat);
+            if (precondition != null) return Reject(cand, SupportState.Unsupported, precondition);
 
             var importKeys = new List<string>();
             foreach (var channel in cand.Adapter.Channels)
@@ -200,6 +200,10 @@ namespace ChikumaTateshina.AssetsOptimizer
             if (cand.Channels.Count == 0)
                 return Reject(cand, SupportState.Unsupported, "アトラス化するテクスチャがありません");
 
+            foreach (var shared in cand.Adapter.SharedTextures)
+                if (mat.HasProperty(shared))
+                    importKeys.Add(shared + "=shared:" + TextureIdentity.Key(mat.GetTexture(shared), contentDedupe) + ":" +
+                                   mat.GetTextureScale(shared) + mat.GetTextureOffset(shared));
             var tail = cand.Adapter.Id + "#" + cand.Adapter.Version + "|" + string.Join(";", importKeys);
             cand.StrictKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, true, false);
             cand.LooseKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, false, false);
@@ -469,6 +473,11 @@ namespace ChikumaTateshina.AssetsOptimizer
             {
                 var clone = gen.Copy.FindRenderer(key);
                 var original = data.Renderers[key];
+                if (clone == null)
+                {
+                    result.Fail(key + ": Renderer が見つかりません。");
+                    continue;
+                }
                 Mesh mesh = clone is SkinnedMeshRenderer smr ? smr.sharedMesh : clone.GetComponent<MeshFilter>()?.sharedMesh;
                 if (mesh == null)
                 {

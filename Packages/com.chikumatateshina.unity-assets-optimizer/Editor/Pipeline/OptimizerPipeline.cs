@@ -12,6 +12,7 @@ namespace ChikumaTateshina.AssetsOptimizer
     public sealed class AnalysisSession
     {
         public OptimizationSettings Settings;
+        public RunKind Kind;
         public ResolvedSelection Selection;
         public DependencyGraph Graph;
         public AnalysisReport Analysis;
@@ -35,6 +36,9 @@ namespace ChikumaTateshina.AssetsOptimizer
         public List<RankResult> Ranks = new List<RankResult>();
         public string Error;
         public RunLog Log = new RunLog();
+        public VisualDiffResult VisualDiff;
+        public ConversionReport Conversion;
+        public List<string> OutputKinds = new List<string>();
 
         public IEnumerable<OperationPlan> ForcePlans => Plans.Where(p => p.UsesForce);
         public bool CanExecute => Error == null && ValidationPassed && !Session.Analysis.HasBlockingIssues && Plans.Any(p => p.WillExecute);
@@ -52,6 +56,8 @@ namespace ChikumaTateshina.AssetsOptimizer
         public List<string> GeneratedPrefabs = new List<string>();
         public List<RankResult> Ranks = new List<RankResult>();
         public string ReportPath;
+        public ConversionReport Conversion;
+        public VisualDiffResult VisualDiff;
     }
 
     /// <summary>処理の中断（fail-closed）。</summary>
@@ -65,12 +71,19 @@ namespace ChikumaTateshina.AssetsOptimizer
     /// </summary>
     public static class OptimizerPipeline
     {
+        /// <summary>空きディスク容量の取得（テストで差し替え可能）。</summary>
+        internal static Func<long> FreeSpaceProvider = () =>
+        {
+            var drive = new DriveInfo(Path.GetPathRoot(VaoInfo.ProjectRoot));
+            return drive.IsReady ? drive.AvailableFreeSpace : long.MaxValue;
+        };
+
         /// <param name="progress">(メッセージ, 進捗0-1) を受け取り、キャンセル要求時に true を返す。</param>
         public delegate bool ProgressCallback(string message, float progress);
 
-        public static AnalysisSession Analyze(IEnumerable<GameObject> selection, OptimizationSettings settings)
+        public static AnalysisSession Analyze(IEnumerable<GameObject> selection, OptimizationSettings settings, RunKind kind = RunKind.Optimize)
         {
-            var session = new AnalysisSession { Settings = settings.Clone() };
+            var session = new AnalysisSession { Settings = settings.Clone(), Kind = kind };
             session.Selection = SelectionResolver.Resolve(selection);
             session.Graph = DependencyGraph.Build(session.Selection.Roots);
             session.Analysis = AssetAnalyzer.Analyze(session.Graph);
@@ -123,12 +136,40 @@ namespace ChikumaTateshina.AssetsOptimizer
             return list;
         }
 
-        static OptimizationContext CreateContext(AnalysisSession session) => new OptimizationContext
+        static OptimizationContext CreateContext(AnalysisSession session)
         {
-            Graph = session.Graph,
-            Analysis = session.Analysis,
-            Settings = session.Settings,
-        };
+            var context = new OptimizationContext
+            {
+                Graph = session.Graph,
+                Analysis = session.Analysis,
+                Settings = session.Settings,
+            };
+            if (session.Kind != RunKind.Optimize)
+                context.ModeOverrides = new Dictionary<string, ExecutionMode>
+                {
+                    { MobileShaderConversionOperation.OperationId, session.Settings.mobileShaderMode },
+                    { MobileTextureOperation.OperationId, ExecutionMode.Auto },
+                };
+            return context;
+        }
+
+        static VrcPlatform PlatformOf(RunKind kind) => kind == RunKind.iOS ? VrcPlatform.iOS : VrcPlatform.Android;
+
+        public static IOptimizationOperation[] Operations(RunKind kind)
+        {
+            if (kind == RunKind.Optimize) return OperationRegistry.CreateAll();
+            var platform = PlatformOf(kind);
+            return new IOptimizationOperation[] { new MobileShaderConversionOperation(platform), new MobileTextureOperation(platform) };
+        }
+
+        static string OutputFolderName(RunKind kind) => kind == RunKind.Optimize ? VaoInfo.GeneratedFolderName : kind.ToString();
+
+        static void CheckConversionEnabled(AnalysisSession session)
+        {
+            if (session.Kind == RunKind.Optimize) return;
+            if (!CapabilityDatabase.IsConversionEnabled(PlatformOf(session.Kind), session.Settings.preset, out var reason))
+                throw new VaoAbortException(session.Kind + " 変換は無効です: " + reason);
+        }
 
         /// <summary>一時領域（メモリ上）で同一アルゴリズムの生成を行い、予測値を算出する。AssetDatabase には書き込まない。</summary>
         public static DryRunResult DryRun(AnalysisSession session, ProgressCallback progress = null)
@@ -137,23 +178,27 @@ namespace ChikumaTateshina.AssetsOptimizer
             result.SnapshotBytes = SnapshotService.EstimateSize(session.Graph.AssetPaths);
             try
             {
-                result.Plans = OptimizationPlanner.Plan(CreateContext(session), OperationRegistry.CreateAll());
+                CheckConversionEnabled(session);
+                result.Plans = OptimizationPlanner.Plan(CreateContext(session), Operations(session.Kind));
                 if (session.Analysis.HasBlockingIssues) return result;
 
-                using (var copy = WorkingCopy.Create(session.Roots))
+                using (var copy = WorkingCopy.Create(session.Roots, session.Settings.outputMode))
                 using (var gen = new GenerationContext(false, null, session.Settings, copy, result.Log, () => progress != null && progress("Dry Run", 0.5f)))
                 {
                     foreach (var plan in result.Plans.Where(p => p.WillExecute))
                     {
                         if (progress != null && progress("Dry Run: " + plan.Operation.DisplayName, 0.5f)) throw new OperationCanceledException();
                         plan.Operation.Execute(gen, plan);
-                    }
-                    foreach (var plan in result.Plans.Where(p => p.WillExecute))
-                    {
+                        // 後続の処理（結合等）が対象を変える前に、その処理の結果を検証する
                         var v = plan.Operation.Validate(gen, plan);
                         if (!v.Passed) result.ValidationPassed = false;
                         result.ValidationMessages.AddRange(v.Messages.Select(m => plan.Operation.Id + ": " + m));
                     }
+
+                    result.OutputKinds.AddRange(copy.KindReasons);
+                    if (session.Settings.visualDiff) result.VisualDiff = VisualDiff.Compare(session.Roots, copy.Roots);
+                    if (session.Kind != RunKind.Optimize)
+                        result.Conversion = MobileConversionValidator.Evaluate(copy.Roots, PlatformOf(session.Kind), session.Settings.preset, result.Plans);
 
                     var ctx = MeasurementContext.Capture("Dry Run 生成物（メモリ上）から計算");
                     result.Predicted = MetricsCalculator.Compute(copy.Roots, ctx, gen.Textures);
@@ -166,6 +211,10 @@ namespace ChikumaTateshina.AssetsOptimizer
             catch (OperationCanceledException)
             {
                 result.Error = "Dry Run はキャンセルされました。";
+            }
+            catch (VaoAbortException e)
+            {
+                result.Error = e.Message;
             }
             catch (Exception e)
             {
@@ -225,7 +274,8 @@ namespace ChikumaTateshina.AssetsOptimizer
             {
                 Step("入力の再検証", 0.02f);
                 if (dryRun.Error != null || !dryRun.CanExecute) throw new VaoAbortException("Dry Run が完了していないか、実行可能な処理がありません。");
-                var fresh = Analyze(session.Roots, session.Settings);
+                CheckConversionEnabled(session);
+                var fresh = Analyze(session.Roots, session.Settings, session.Kind);
                 if (fresh.InputHash != session.InputHash) throw new VaoAbortException("Dry Run 後に対象または依存アセットが変更されました。再度 Dry Run を行ってください。");
                 if (fresh.SettingsHash != session.SettingsHash) throw new VaoAbortException("Dry Run 後に設定が変更されました。再度 Dry Run を行ってください。");
                 if (fresh.Analysis.HasBlockingIssues) throw new VaoAbortException("実行不可の問題があります: " + string.Join(" / ", fresh.Analysis.Issues.Where(i => i.Blocking).Select(i => i.Message)));
@@ -242,8 +292,7 @@ namespace ChikumaTateshina.AssetsOptimizer
 
                 // 必要容量の確認（スナップショット + 生成物の余裕）
                 long needed = dryRun.SnapshotBytes * 2 + 64L * 1024 * 1024;
-                var drive = new DriveInfo(Path.GetPathRoot(VaoInfo.ProjectRoot));
-                if (drive.IsReady && drive.AvailableFreeSpace < needed)
+                if (FreeSpaceProvider() < needed)
                     throw new VaoAbortException("ディスク容量が不足しています（必要目安 " + Metric.FormatNumber(needed, "bytes") + "）。");
 
                 sceneStates = SnapshotService.CaptureSceneStates();
@@ -257,7 +306,7 @@ namespace ChikumaTateshina.AssetsOptimizer
                 if (copyErrors.Count > 0) throw new VaoAbortException("スナップショットの検証に失敗したため開始しません: " + string.Join(" / ", copyErrors));
 
                 Step("計画の再作成", 0.2f);
-                plans = OptimizationPlanner.Plan(CreateContext(fresh), OperationRegistry.CreateAll());
+                plans = OptimizationPlanner.Plan(CreateContext(fresh), Operations(session.Kind));
                 if (PlanSignature(plans) != PlanSignature(dryRun.Plans)) throw new VaoAbortException("計画が Dry Run と一致しません。再度 Dry Run を行ってください。");
                 foreach (var plan in plans.Where(p => p.UsesForce))
                     if (approvals == null || !approvals.Any(a => a.operationId == plan.Decision.operationId))
@@ -266,39 +315,41 @@ namespace ChikumaTateshina.AssetsOptimizer
                 Step("生成（ステージング）", 0.3f);
                 var staging = runFolder + "/" + VaoInfo.StagingFolderName;
                 AssetPathUtility.EnsureFolder(staging);
-                copy = WorkingCopy.Create(session.Roots);
+                copy = WorkingCopy.Create(session.Roots, session.Settings.outputMode);
                 gen = new GenerationContext(true, staging, session.Settings, copy, log, Cancel);
+                bool valid = true;
                 foreach (var plan in plans.Where(p => p.WillExecute))
                 {
                     Step("生成: " + plan.Operation.DisplayName, 0.4f);
                     plan.Operation.Execute(gen, plan);
-                }
-                gen.FinalizeTextures();
-
-                Step("検証", 0.6f);
-                bool valid = true;
-                foreach (var plan in plans.Where(p => p.WillExecute))
-                {
+                    // 後続の処理（結合等）が対象を変える前に、その処理の結果を検証する
                     var v = plan.Operation.Validate(gen, plan);
                     report.validation.AddRange(v.Messages.Select(m => plan.Decision.operationId + ": " + m));
                     if (!v.Passed) valid = false;
                 }
                 if (!valid) throw new VaoAbortException("生成物の検証に失敗しました: " + string.Join(" / ", report.validation));
+                Step("テクスチャの確定", 0.6f);
+                gen.FinalizeTextures();
 
                 var prefabPaths = new List<string>();
                 for (int i = 0; i < copy.Roots.Count; i++)
                 {
-                    var path = AssetDatabase.GenerateUniqueAssetPath(staging + "/" + AssetPathUtility.SanitizeFileName(copy.Roots[i].name) + ".prefab");
+                    var suffix = session.Kind == RunKind.Optimize ? string.Empty : "_" + session.Kind;
+                    var path = AssetDatabase.GenerateUniqueAssetPath(staging + "/" + AssetPathUtility.SanitizeFileName(copy.Roots[i].name + suffix) + ".prefab");
                     gen.CheckWrite(path);
                     PrefabUtility.SaveAsPrefabAsset(copy.Roots[i], path, out bool ok);
                     if (!ok) throw new VaoAbortException("Prefab の保存に失敗しました: " + path);
                     prefabPaths.Add(path);
-                    gen.Outputs.Add(new OutputAsset { path = path, guid = AssetDatabase.AssetPathToGUID(path), kind = "Prefab", operationId = "pipeline", sourceRef = session.Selection.Targets[i].globalObjectId });
+                    var kind = copy.Kinds[i] == CopyKind.PrefabInstance ? "PrefabVariant" : "Prefab";
+                    gen.Outputs.Add(new OutputAsset { path = path, guid = AssetDatabase.AssetPathToGUID(path), kind = kind, operationId = "pipeline", sourceRef = session.Selection.Targets[i].globalObjectId });
+                    report.outputKinds.Add(copy.Roots[i].name + ": " + copy.KindReasons[i]);
                 }
 
                 for (int i = 0; i < prefabPaths.Count; i++)
                 {
-                    var v = StructuralValidator.Compare(session.Roots[i], AssetDatabase.LoadAssetAtPath<GameObject>(prefabPaths[i]));
+                    int rootIndex = i;
+                    var changes = gen.StructuralChanges.Where(c => c.RootIndex == rootIndex);
+                    var v = StructuralValidator.Compare(session.Roots[i], AssetDatabase.LoadAssetAtPath<GameObject>(prefabPaths[i]), changes);
                     if (!v.Passed) throw new VaoAbortException("構造検証に失敗しました: " + string.Join(" / ", v.Messages));
                 }
                 report.validation.Add("構造検証: OK（階層・コンポーネント構成・Mesh/Material 参照・三角形数）");
@@ -308,7 +359,7 @@ namespace ChikumaTateshina.AssetsOptimizer
                 if (!integrity.passed) throw new VaoAbortException("原本の整合性検証に失敗しました: " + string.Join(" / ", integrity.errors));
 
                 Step("コミット", 0.8f);
-                var generatedFolder = runFolder + "/" + VaoInfo.GeneratedFolderName;
+                var generatedFolder = runFolder + "/" + OutputFolderName(session.Kind);
                 var moveError = AssetDatabase.MoveAsset(staging, generatedFolder);
                 if (!string.IsNullOrEmpty(moveError)) throw new VaoAbortException("コミット（移動）に失敗しました: " + moveError);
                 foreach (var o in gen.Outputs) o.path = generatedFolder + o.path.Substring(staging.Length);
@@ -319,6 +370,16 @@ namespace ChikumaTateshina.AssetsOptimizer
                 var afterContext = MeasurementContext.Capture("構造値（コミット済み生成物から計算）");
                 result.After = MetricsCalculator.Compute(prefabRoots, afterContext);
                 if (session.Settings.preset == ContentPreset.Avatar) result.Ranks = EvaluateRanks(prefabRoots, session.Analysis.HasBuildTimeTools);
+                if (session.Settings.visualDiff) result.VisualDiff = VisualDiff.Compare(session.Roots, prefabRoots);
+                report.predictedVisualDiff = dryRun.VisualDiff;
+                report.visualDiff = result.VisualDiff;
+                if (session.Kind != RunKind.Optimize)
+                {
+                    result.Conversion = MobileConversionValidator.Evaluate(prefabRoots, PlatformOf(session.Kind), session.Settings.preset, plans);
+                    report.conversion = result.Conversion;
+                }
+                report.runKind = session.Kind.ToString();
+                report.structuralChanges.AddRange(gen.StructuralChanges.Select(c => (c.Added ? "追加 " : "削除 ") + c.Path + " " + c.ComponentType + "（" + c.OperationId + "）"));
                 report.contextAfter = afterContext;
                 report.contextWarnings.AddRange(session.Context.CompareWith(afterContext));
                 report.metrics = RunReport.Compare(session.Baseline, dryRun.Predicted, result.After);
@@ -381,6 +442,59 @@ namespace ChikumaTateshina.AssetsOptimizer
 
             if (!committed) Rollback(result, report, plans, snapshot, session, sceneStates, runFolder, log);
             return result;
+        }
+
+        /// <summary>
+        /// NDMF ビルド時用: ビルド用クローン（原本ではない）に対して AUTO の処理だけをその場で適用する。
+        /// 生成物はメモリ上に作り save（NDMF の AssetSaver）へ渡す。FORCE・原本テクスチャのコピー・スナップショットは使わない。
+        /// 解析で実行不可の問題、または検証失敗時は例外を投げてビルドを止める（fail-closed）。
+        /// </summary>
+        public static RunReport ApplyInPlace(GameObject buildClone, OptimizationSettings settings, Action<UnityEngine.Object> save)
+        {
+            var log = new RunLog();
+            var s = settings.Clone();
+            foreach (var f in s.features) if (f.mode == ExecutionMode.Force) f.mode = ExecutionMode.Auto;
+            s.visualDiff = false;
+
+            var session = Analyze(new[] { buildClone }, s);
+            var report = new RunReport
+            {
+                runId = "ndmf-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture),
+                unityVersion = Application.unityVersion,
+                sdkVersions = SdkInfo.Describe(),
+                preset = s.preset.ToString(),
+                createdAtUtc = DateTime.UtcNow.ToString("o", CultureInfo.InvariantCulture),
+                settings = s,
+                contextBefore = session.Context,
+                log = log,
+                runKind = "NDMF",
+                restoreState = "ビルド用クローンに適用（原本・シーンは変更なし）",
+            };
+            report.targets.AddRange(session.Selection.Targets);
+            if (session.Analysis.HasBlockingIssues)
+                throw new VaoAbortException("VRChat Asset Optimizer: 実行不可の問題があります: " +
+                                            string.Join(" / ", session.Analysis.Issues.Where(i => i.Blocking).Select(i => i.Message)));
+
+            var plans = OptimizationPlanner.Plan(CreateContext(session), OperationRegistry.CreateAll());
+            using (var copy = WorkingCopy.Wrap(new[] { buildClone }))
+            using (var gen = new GenerationContext(false, null, s, copy, log, null) { InMemoryFinal = true, SaveTransient = save })
+            {
+                foreach (var plan in plans.Where(p => p.WillExecute))
+                {
+                    plan.Operation.Execute(gen, plan);
+                    var v = plan.Operation.Validate(gen, plan);
+                    report.validation.AddRange(v.Messages.Select(m => plan.Decision.operationId + ": " + m));
+                    if (!v.Passed) throw new VaoAbortException("VRChat Asset Optimizer: 検証に失敗しました: " + string.Join(" / ", v.Messages));
+                }
+                gen.FinalizeTextures();
+                var after = MetricsCalculator.Compute(copy.Roots, MeasurementContext.Capture("NDMF ビルド後の構成から計算"));
+                report.metrics = RunReport.Compare(session.Baseline, null, after);
+                report.structuralChanges.AddRange(gen.StructuralChanges.Select(c => (c.Added ? "追加 " : "削除 ") + c.Path + " " + c.ComponentType));
+            }
+            FillOperations(report, plans);
+            report.result = "Applied (NDMF)";
+            ReportWriter.WriteFiles(report, VaoInfo.FailureLogFolderFull, report.runId);
+            return report;
         }
 
         static void Rollback(RunResult result, RunReport report, List<OperationPlan> plans, SnapshotResult snapshot, AnalysisSession session,

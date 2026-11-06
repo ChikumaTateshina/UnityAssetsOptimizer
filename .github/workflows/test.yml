@@ -1,0 +1,74 @@
+name: Tests
+
+# Unity の EditMode テストを GameCI で実行する。
+# 必要な Secret: UNITY_LICENSE（Personal の .ulf 内容）、UNITY_EMAIL、UNITY_PASSWORD
+# 未設定の場合はスキップする（失敗にはしない）。
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  UNITY_VERSION: 2022.3.22f1
+  PACKAGE_NAME: com.chikumatateshina.unity-assets-optimizer
+
+jobs:
+  editmode:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Unity license secret
+        id: license
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "::notice::UNITY_LICENSE secret is not set. Skipping Unity tests."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.license.outputs.skip != 'true'
+
+      - name: Create test project
+        if: steps.license.outputs.skip != 'true'
+        run: |
+          mkdir -p TestProject/Assets TestProject/Packages TestProject/ProjectSettings
+          echo "m_EditorVersion: ${UNITY_VERSION}" > TestProject/ProjectSettings/ProjectVersion.txt
+          cat > TestProject/Packages/manifest.json <<EOF
+          {
+            "dependencies": {
+              "${PACKAGE_NAME}": "file:../../Packages/${PACKAGE_NAME}",
+              "com.unity.test-framework": "1.1.33",
+              "com.unity.modules.animation": "1.0.0",
+              "com.unity.modules.audio": "1.0.0",
+              "com.unity.modules.imageconversion": "1.0.0",
+              "com.unity.modules.imgui": "1.0.0",
+              "com.unity.modules.jsonserialize": "1.0.0",
+              "com.unity.modules.particlesystem": "1.0.0",
+              "com.unity.modules.physics": "1.0.0",
+              "com.unity.modules.ui": "1.0.0",
+              "com.unity.modules.uielements": "1.0.0"
+            },
+            "testables": ["${PACKAGE_NAME}"]
+          }
+          EOF
+
+      - uses: game-ci/unity-test-runner@v4
+        if: steps.license.outputs.skip != 'true'
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: TestProject
+          unityVersion: ${{ env.UNITY_VERSION }}
+          testMode: editmode
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+          checkName: EditMode Test Results
+
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.license.outputs.skip != 'true'
+        with:
+          name: test-results
+          path: artifacts

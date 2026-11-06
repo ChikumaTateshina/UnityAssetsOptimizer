@@ -36,8 +36,8 @@ namespace ChikumaTateshina.AssetsOptimizer
     /// </summary>
     public static class MetricsCalculator
     {
-        const string RenderUnavailable = "隔離プレビューでの描画計測は未実装（Phase 3）。推測値で補完しません。";
-        const string TimeUnavailable = "Profiler 計測は未実装（Phase 3）。実機/Editor 計測なしに算出できません。";
+        const string TimeUnavailable = "フレーム時間は実機/Editor での実測が必要です（構造値からは算出しません）。";
+        public const string RenderModel = "モデル推定（Built-in Forward・平行光源1灯・影なし・バッチング/インスタンシングなし・有効な Mesh/SkinnedMesh Renderer が全て可視）";
 
         /// <param name="plannedTextures">Dry Run で生成した未インポートのテクスチャ（推定方法を切り替える）。</param>
         public static MetricSet Compute(IList<GameObject> roots, MeasurementContext context, IList<GeneratedTexture> plannedTextures = null)
@@ -91,12 +91,74 @@ namespace ChikumaTateshina.AssetsOptimizer
             set.Add(DiskSize(meshes, materials, textures, plannedTextures, cid));
             set.Add(TextureMemory(textures, plannedTextures, cid));
 
-            set.Add(Metric.Unavailable(MetricKeys.DrawCalls, "Draw Calls", "", RenderUnavailable, cid));
-            set.Add(Metric.Unavailable(MetricKeys.SetPassCalls, "SetPass Calls", "", RenderUnavailable, cid));
-            set.Add(Metric.Unavailable(MetricKeys.Batches, "Batches", "", RenderUnavailable, cid));
+            AddRenderEstimates(set, renderers, roots, cid);
             set.Add(Metric.Unavailable(MetricKeys.CpuTime, "CPU描画時間", "ms", TimeUnavailable, cid));
             set.Add(Metric.Unavailable(MetricKeys.GpuTime, "GPU描画時間", "ms", TimeUnavailable, cid));
             return set;
+        }
+
+        static bool IsActive(Renderer r, IList<GameObject> roots)
+        {
+            if (!r.enabled) return false;
+            for (var t = r.transform; t != null; t = t.parent)
+            {
+                if (!t.gameObject.activeSelf) return false;
+                if (roots.Any(root => root.transform == t)) break;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 描画系のモデル推定。実測ではなく、前提条件（RenderModel）の下での上限目安。
+        /// Draw Calls = Σ(有効スロット × Forward 系パス数)、SetPass = (シェーダー, キーワード, パス) の種類数。
+        /// </summary>
+        static void AddRenderEstimates(MetricSet set, List<Renderer> renderers, IList<GameObject> roots, string cid)
+        {
+            long draws = 0;
+            var setPass = new HashSet<string>();
+            int excluded = 0;
+            foreach (var r in renderers)
+            {
+                if (!IsActive(r, roots)) continue;
+                Mesh mesh = r is SkinnedMeshRenderer smr ? smr.sharedMesh : r is MeshRenderer ? r.GetComponent<MeshFilter>()?.sharedMesh : null;
+                if (mesh == null)
+                {
+                    excluded++;
+                    continue;
+                }
+                foreach (var m in r.sharedMaterials)
+                {
+                    if (m == null || m.shader == null) continue;
+                    var keywords = string.Join(",", m.shaderKeywords.OrderBy(k => k, System.StringComparer.Ordinal));
+                    for (int p = 0; p < m.passCount; p++)
+                    {
+                        var lightMode = m.shader.FindPassTagValue(p, new ShaderTagId("LightMode")).name ?? string.Empty;
+                        if (!IsForwardPass(lightMode)) continue;
+                        if (lightMode.Length > 0 && !m.GetShaderPassEnabled(lightMode)) continue;
+                        draws++;
+                        setPass.Add(m.shader.name + "|" + keywords + "|" + p);
+                    }
+                }
+            }
+            var method = RenderModel + (excluded > 0 ? "。Mesh 以外の Renderer（Particle/Trail/Line 等）" + excluded + " 個は含まない" : string.Empty);
+            set.Add(Metric.Of(MetricKeys.DrawCalls, "Draw Calls", draws, "", MetricKind.Estimated, method, cid));
+            set.Add(Metric.Of(MetricKeys.SetPassCalls, "SetPass Calls", setPass.Count, "", MetricKind.Estimated, method + "。シェーダー/キーワード/パスの種類数（下限目安）", cid));
+            set.Add(Metric.Of(MetricKeys.Batches, "Batches", draws, "", MetricKind.Estimated, method + "。バッチングなしの前提のため Draw Calls と同値", cid));
+        }
+
+        static bool IsForwardPass(string lightMode)
+        {
+            switch (lightMode)
+            {
+                case "":
+                case "Always":
+                case "ForwardBase":
+                case "SRPDefaultUnlit":
+                case "UniversalForward":
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         static Metric DiskSize(HashSet<Mesh> meshes, HashSet<Material> materials, HashSet<Texture> textures, IList<GeneratedTexture> planned, string cid)
@@ -131,7 +193,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             var unsupported = new List<string>();
             foreach (var t in textures)
             {
-                var plannedRecord = planned?.FirstOrDefault(p => p.Texture == t && !EditorUtility.IsPersistent(t));
+                var plannedRecord = planned?.FirstOrDefault(p => p.Texture == t && string.IsNullOrEmpty(p.AssetPath));
                 if (plannedRecord != null)
                 {
                     var est = TextureMemoryEstimator.EstimatePlanned(plannedRecord, out var method);

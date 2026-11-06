@@ -22,6 +22,7 @@ namespace ChikumaTateshina.AssetsOptimizer
         public string[] textureFormats;
         public string performanceRuleSetId;
         public bool verified;
+        public string verification;
         [NonSerialized] public string filePath;
     }
 
@@ -49,22 +50,59 @@ namespace ChikumaTateshina.AssetsOptimizer
             return list;
         }
 
-        /// <summary>変換を有効化できるか。検証済みエントリがなければ常に false（変換不可）。</summary>
+        /// <summary>
+        /// 変換を有効化できるか。検証済みエントリがあり、かつプロジェクトの SDK バージョンが検証範囲内の場合のみ true（fail-closed）。
+        /// </summary>
         public static bool IsConversionEnabled(VrcPlatform platform, ContentPreset content, out string reason)
         {
-            var entries = LoadAll().Where(c => c.platform == platform.ToString() && c.contentType == content.ToString()).ToList();
             if (platform == VrcPlatform.PC)
             {
                 reason = "PC 版は元データを維持します（変換対象外）。";
                 return false;
             }
-            if (!entries.Any(e => e.verified))
+            var entries = LoadAll().Where(c => c.platform == platform.ToString() && c.contentType == content.ToString() && c.verified).ToList();
+            if (entries.Count == 0)
             {
-                reason = platform + "/" + content + " の検証済み能力 DB がありません。変換は Phase 5 で SDK・公式仕様の検証後に有効化します。";
+                reason = platform + "/" + content + " の検証済み能力 DB がありません。";
                 return false;
             }
-            reason = "変換処理は未実装です（Phase 5）。";
-            return false;
+            var sdkPackage = content == ContentPreset.Avatar ? "com.vrchat.avatars" : "com.vrchat.worlds";
+            var sdk = SdkInfo.Version(sdkPackage);
+            if (sdk == null)
+            {
+                reason = sdkPackage + " が見つかりません（VRChat SDK 未導入）。";
+                return false;
+            }
+            var entry = entries.FirstOrDefault(e => InRange(sdk, e.vrcSdkVersionRange) && InRange(Application.unityVersion, e.unityVersionRange));
+            if (entry == null)
+            {
+                reason = "SDK " + sdk + " / Unity " + Application.unityVersion + " は検証範囲（" + string.Join(", ", entries.Select(e => e.vrcSdkVersionRange)) + "）外のため無効です。";
+                return false;
+            }
+            reason = "検証済み: " + entry.verification;
+            return true;
+        }
+
+        /// <summary>">=a <b" 形式の範囲判定。</summary>
+        public static bool InRange(string version, string range)
+        {
+            if (string.IsNullOrEmpty(range)) return false;
+            if (!TryParse(version, out var v)) return false;
+            foreach (var token in range.Split(new[] { ' ' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (token.StartsWith(">=", StringComparison.Ordinal)) { if (!TryParse(token.Substring(2), out var lo) || v < lo) return false; }
+                else if (token.StartsWith("<", StringComparison.Ordinal)) { if (!TryParse(token.Substring(1), out var hi) || v >= hi) return false; }
+                else return false;
+            }
+            return true;
+        }
+
+        static bool TryParse(string s, out Version v)
+        {
+            v = null;
+            if (string.IsNullOrEmpty(s)) return false;
+            var digits = new string(s.TakeWhile(c => char.IsDigit(c) || c == '.').ToArray()).Trim('.');
+            return Version.TryParse(digits.Count(c => c == '.') == 0 ? digits + ".0" : digits, out v);
         }
     }
 }

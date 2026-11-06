@@ -151,6 +151,14 @@ namespace ChikumaTateshina.AssetsOptimizer
         public bool TextureContentDedupe;
         /// <summary>アトラス化で生成予定のテクスチャ数（後続のテクスチャ処理の対象有無判定用）。</summary>
         public int PlannedGeneratedTextureCount;
+        /// <summary>機能カタログ外の Operation（モバイル変換等）や NDMF 実行時のモード指定。</summary>
+        public Dictionary<string, ExecutionMode> ModeOverrides;
+
+        public ExecutionMode ModeFor(string id) =>
+            ModeOverrides != null && ModeOverrides.TryGetValue(id, out var m) ? m : Settings.GetMode(id);
+
+        public bool IsApplicable(string id) =>
+            (ModeOverrides != null && ModeOverrides.ContainsKey(id)) || Settings.IsApplicable(id);
 
         public Material Canonical(Material m)
         {

@@ -1,59 +1,89 @@
 # Compatibility Matrix
 
-実装仕様書 §16 に基づき、対象 Unity / VRChat SDK の公開 API・公式仕様の検証状況を記録する。
+実装仕様書 §16 に基づき、対象 Unity / VRChat SDK / 外部パッケージの公開 API・仕様の検証状況を記録する。
 **「未検証」の項目は実装済みとして扱わず、該当機能は無効（取得不可/変換不可/スキップ）とする。**
 
-最終更新: 2026-11-07（v0.1.0）
+最終更新: 2026-11-07（v0.2.0）
 
-## 環境
+## 検証環境
 
-| 項目 | 状態 | 備考 |
+| 項目 | 版 | 確認方法 |
 |---|---|---|
-| Unity 2022.3（Built-in RP） | コンパイル・EditMode テストで確認 | 2022.3.31f1 で確認。VRChat が指定する 2022.3 系パッチ版での確認は利用者側で実施すること |
-| VRChat SDK（Base/Avatars/Worlds） | コンパイル時依存なし | バージョンは `PackageInfo` から読み取り、レポートに記録のみ |
-| Modular Avatar / VRCFury / NDMF | 検出のみ | 型名の名前空間で検出し「評価不完全」として扱う。ビルド時変換にはアクセスしない |
+| Unity | 2022.3.31f1 | Unity DLL に対するコンパイル、EditMode テスト（SDK なし / SDK あり の2構成） |
+| VRChat SDK Base / Avatars | 3.9.0 | パッケージのソースと公開クラスを確認し、SDK 入りプロジェクトで EditMode テスト |
+| NDMF | 1.9.4 | `Plugin<T>` / `BuildPhase.Optimizing` / `Sequence.Run` / `INDMFEditorOnly` のソースを確認し、`AvatarProcessor.ProcessAvatar` でテスト |
+| lilToon | 2.3.1 | `Shader/lts*.shader` と `Includes/lil_common_frag.hlsl` でテクスチャの UV を確認し、テスト |
 
 ## Shader Adapter（アトラス化）
 
-| Adapter ID | シェーダー | チャンネル | 状態 |
+| Adapter | 対象 | アトラス化するテクスチャ | 状態 |
 |---|---|---|---|
-| unity.standard | Standard | _MainTex, _MetallicGlossMap, _BumpMap, _ParallaxMap, _OcclusionMap, _EmissionMap, _DetailMask | 対応（Detail Albedo/Normal 使用時は非対応） |
-| unity.standard-specular | Standard (Specular setup) | 同上（_SpecGlossMap） | 対応（同上） |
-| unity.unlit-texture 他 | Unlit/Texture, Unlit/Transparent, Unlit/Transparent Cutout, Legacy Shaders/Diffuse, Mobile/Diffuse | _MainTex | 対応 |
-| — | VRChat/Mobile/* | — | **未検証**（プロパティ仕様の確認後に Adapter を追加） |
-| — | lilToon / Poiyomi / UTS 等 | — | **未検証**（専用 Adapter が必要） |
+| unity.standard / standard-specular | Standard, Standard (Specular setup) | Main/Metallic(Spec)/Bump/Parallax/Occlusion/Emission/DetailMask | 対応（Detail Albedo/Normal 使用時は非対応） |
+| unity.unlit-* / legacy-diffuse / mobile-diffuse | Unlit/Texture, Unlit/Transparent(+Cutout), Legacy Shaders/Diffuse, Mobile/Diffuse | _MainTex | 対応 |
+| liltoon | lilToon（通常/Cutout/Transparent/OnePass/TwoPass、各 Outline、Lite 系） | メイン UV（`uvMain`）でサンプルされるもの: Main/BaseMap/AlphaMask/Bump/Shadow*/Rim*/Matcap マスク/Emission(2nd)/Outline 等 | 対応（下記条件） |
+| — | lilToon Fur/Gem/Refraction/Tessellation/FakeShadow/Overlay/Multi/OutlineOnly | — | 非対応（UV 以外の処理を含むため未検証） |
+| — | Poiyomi | — | **未検証**（ソースを入手・確認していないため対象外） |
+| — | VRChat/Mobile/* | — | アトラス対象外（変換先として使用） |
 
-前提条件（すべて満たす場合のみ AUTO で処理）:
-- 全チャンネルの Tiling/Offset が (1,1)/(0,0)
-- サブメッシュの UV0 が [0,1] 内（タイル/ミラー/負座標はスキップ）
-- テクスチャが 2D・Texture Type が Default（ノーマルは NormalMap）・PNG/JPEG（カラー/データは TGA/PSD/TIFF/BMP/GIF も GPU 読み戻しで可）
-- 互換グループ内で Shader・Render Queue・Keyword・Pass・非テクスチャプロパティ・Importer 設定（sRGB/Alpha/Filter/Aniso）が一致
+lilToon の条件（いずれかに該当すると AUTO でアトラス化しない）:
+- MatCap・グラデーション・ディザ・Ramp テクスチャがグループ内で異なる（UV に依存しないため同一である必要がある）
+- 2nd/3rd メイン、2nd ノーマル、異方性、Glitter、視差、AudioLink、Dissolve のテクスチャ設定、または機能が有効
+- `_MainTex_ScrollRotate`・`_OutlineTex_ScrollRotate`・発光マップの UV アニメーション、`_ShiftBackfaceUV`、発光マップの UV モード ≠ UV0、UDIM Discard
+
+共通の前提: 全チャンネルの Tiling/Offset が単位値、サブメッシュの UV0 が [0,1] 内、テクスチャが 2D・Default（ノーマルは NormalMap かつ PNG/JPEG）。
 
 ## VRChat Avatar Performance Rank
 
 | 項目 | 状態 |
 |---|---|
-| SDK 公式評価 API | **未検証** → `SdkOfficialRankProvider` は常に unavailable |
-| 閾値 DB（PC/Android/iOS） | **未検証** → `Editor/Platforms/Data/RankRules/TEMPLATE.*.json`（verified=false）のみ同梱。ランクは「算出不可」、統計値のみ表示 |
+| SDK 公式評価 | **対応**: `VRC.SDKBase.Validation.Performance.AvatarPerformance.CalculatePerformanceStats` と `AvatarPerformanceStats.GetPerformanceRatingForCategory` / `GetStatLevelForRating` をリフレクションで呼ぶ（SDK へのコンパイル時依存なし） |
+| PC / Android | SDK の PC 閾値 / モバイル閾値で算出（official） |
+| iOS | SDK 3.9.0 の閾値リソースは Windows と Quest のみで、評価はモバイル共通のため、モバイル閾値を適用（理由をレポートに明記） |
+| SDK なし | 検証済み閾値 DB（`Assets/VAOSettings/RankRules/*.json`、verified=true）があれば独立推定。なければ統計値のみ |
+| ビルド時変換ツールあり | incomplete（評価不完全） |
 
-閾値を有効化する手順: 公式ドキュメントで対象 SDK 版の閾値を確認し、`Assets/VAOSettings/RankRules/<id>.json` に
-`verified: true`・`sdkMinVersion`/`sdkMaxVersionExclusive`・`source`（出典）を記入して配置する。
+## Mobile Conversion（Android / iOS）
 
-## Mobile Conversion（Phase 5）
+| 項目 | 状態 |
+|---|---|
+| 有効化条件 | 能力 DB（`Editor/Platforms/Data/Capabilities`）の検証範囲: SDK `>=3.9.0 <3.10.0`、Unity `2022.3`。範囲外の SDK では無効（fail-closed） |
+| iOS 対象 | SDK 3.9.0 の `VRCMultiPlatformBuild` に iOS が含まれることを確認 |
+| アバターの判定 | `VRC.SDK3.Validation.AvatarValidation.FindIllegalShaders` で違反なし → 完了（SDK 検証済）。違反が残る → 部分変換/変換不可。SDK がビルド時に削除するコンポーネント（`FindIllegalComponents`）はレポートに列挙（本ツールは削除しない） |
+| ワールドの判定 | SDK の検証 API に接続していないため、最大で「部分変換」 |
+| 実機検証 | 本ツールでは行わない（別ステータス「未実施」） |
+| アップロード | 行わない |
 
-| プラットフォーム | World | Avatar |
+シェーダー変換規則（変換先のプロパティは SDK 3.9.0 同梱シェーダーのソースで確認）:
+
+| 変換元 | 変換先 | AUTO |
 |---|---|---|
-| Android | 未検証（変換不可） | 未検証（変換不可） |
-| iOS | 未検証（変換不可） | 未検証（変換不可） |
+| Standard（不透明・視差/Detail なし） | VRChat/Mobile/Standard Lite | ○ |
+| Legacy/Mobile Diffuse（_Color が白） | VRChat/Mobile/Diffuse | ○ |
+| Unlit/Texture | VRChat/Mobile/Toon Lit | × FORCE のみ（Unlit → Lit） |
+| lilToon（不透明） | VRChat/Mobile/Toon Standard | × FORCE のみ（影・MatCap・輪郭等は失われる） |
+| 透明系 | — | 変換不可（モバイル用アバターシェーダーに透明なし） |
 
-能力 DB テンプレート: `Editor/Platforms/Data/Capabilities/*.json`（すべて verified=false）。
+## NDMF（ビルド時適用）
+
+- NDMF が入っている場合のみ、`ChikumaTateshina.AssetsOptimizer.Ndmf.*` アセンブリが有効になる（`versionDefines` + `defineConstraints`）
+- `Optimizing` フェーズで、Avatar Optimizer（`com.anatawa12.avatar-optimizer`）より前に実行する
+- ビルド用クローンにだけ AUTO の処理を適用する。FORCE、元テクスチャのコピー、スナップショットは使わない。生成物は `BuildContext.AssetSaver` に保存する
 
 ## 計測
 
-| 指標 | 状態 |
+| 指標 | 区分 |
 |---|---|
 | Mesh/Renderer/Material/SubMesh/三角形/頂点/Texture 数 | 確定計算 |
 | 依存アセットのディスク容量 | 確定計算（Dry Run では生成物が未保存のため算出不可） |
 | Texture GPU メモリ | 推定（graphicsFormat × 解像度 × ミップ。常駐 VRAM ではない） |
-| Draw Calls / SetPass / Batches | **取得不可**（隔離プレビュー計測は Phase 3） |
-| CPU/GPU 描画時間 | **取得不可**（Profiler 計測は Phase 3） |
+| Draw Calls / SetPass / Batches | 推定（モデル推定: Built-in Forward・平行光源1灯・影なし・バッチングなし・全可視） |
+| CPU/GPU 描画時間 | 取得不可（実機/Profiler での実測が必要） |
+| 外観の参考比較 | 隔離プレビューで3方向から描画した画像差分（参考値。グラフィックスデバイスがない環境では取得不可） |
+
+## 実装しないもの
+
+| 機能 | 理由 |
+|---|---|
+| Mesh Compression | Unity のメッシュ圧縮（量子化）の仕様が公開されておらず、要件の「形状誤差を検証して不採用判定」ができない |
+| PC 版でのシェーダー自動置換 | 等価変換の検証済み組み合わせは Mobile Conversion でのみ提供する |
+| Poiyomi Adapter | シェーダーソースを確認していないため（入手・確認後に追加） |

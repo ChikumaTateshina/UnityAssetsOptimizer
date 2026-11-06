@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
@@ -6,11 +7,12 @@ namespace ChikumaTateshina.AssetsOptimizer
 {
     /// <summary>
     /// 生成 Prefab が原本と同じ階層・コンポーネント構成を保ち、参照が欠落していないことを検証する。
-    /// 画像差分による外観検証は行わない（機能同等の証明にもならない）。
+    /// Operation が登録した意図的な構造変更（結合による Renderer 削除、LOD の追加等）のみ差分として許容する。
+    /// 画像差分による外観検証は別途参考値として扱う（機能同等の証明にはならない）。
     /// </summary>
     public static class StructuralValidator
     {
-        public static ValidationResult Compare(GameObject original, GameObject generated)
+        public static ValidationResult Compare(GameObject original, GameObject generated, IEnumerable<StructuralChange> changes = null)
         {
             var result = new ValidationResult();
             if (generated == null)
@@ -18,10 +20,13 @@ namespace ChikumaTateshina.AssetsOptimizer
                 result.Fail(original.name + ": 生成 Prefab がありません。");
                 return result;
             }
+            var changeList = (changes ?? Enumerable.Empty<StructuralChange>()).ToList();
+            var addedObjects = changeList.Where(c => c.Added && c.ComponentType == "GameObject").Select(c => c.Path).ToList();
+            bool IsAddedPath(string p) => addedObjects.Any(a => p == a || p.StartsWith(a + "/", StringComparison.Ordinal));
 
             var a = Describe(original);
-            var b = Describe(generated);
-            if (a.Count != b.Count) result.Fail(original.name + ": Transform 数が一致しません（" + a.Count + " → " + b.Count + "）。");
+            var b = Describe(generated).Where(p => !IsAddedPath(p.Key)).ToDictionary(p => p.Key, p => p.Value);
+            if (a.Count != b.Count) result.Fail(original.name + ": Transform 数が一致しません（" + a.Count + " → " + b.Count + "、追加登録分を除く）。");
             foreach (var pair in a)
             {
                 if (!b.TryGetValue(pair.Key, out var types))
@@ -29,33 +34,36 @@ namespace ChikumaTateshina.AssetsOptimizer
                     result.Fail(original.name + ": 階層 '" + pair.Key + "' が生成物にありません。");
                     continue;
                 }
-                if (types != pair.Value) result.Fail(original.name + ": '" + pair.Key + "' のコンポーネント構成が異なります。");
+                var expected = pair.Value.ToList();
+                foreach (var removed in changeList.Where(c => !c.Added && c.Path == pair.Key)) expected.Remove(removed.ComponentType);
+                expected.AddRange(changeList.Where(c => c.Added && c.Path == pair.Key && c.ComponentType != "GameObject").Select(c => c.ComponentType));
+                if (!expected.OrderBy(x => x, StringComparer.Ordinal).SequenceEqual(types.OrderBy(x => x, StringComparer.Ordinal)))
+                    result.Fail(original.name + ": '" + pair.Key + "' のコンポーネント構成が異なります（登録外の変更）。");
             }
 
-            var ra = original.GetComponentsInChildren<Renderer>(true);
-            var rb = generated.GetComponentsInChildren<Renderer>(true);
-            if (ra.Length != rb.Length)
+            var renderersBefore = original.GetComponentsInChildren<Renderer>(true)
+                .ToDictionary(r => Key(r, original.transform), r => r);
+            foreach (var r in generated.GetComponentsInChildren<Renderer>(true))
             {
-                result.Fail(original.name + ": Renderer 数が一致しません。");
-                return result;
-            }
-            for (int i = 0; i < ra.Length; i++)
-            {
-                var path = AssetPathUtility.HierarchyPath(ra[i].transform, original.transform);
-                if (MeshOf(ra[i]) != null && MeshOf(rb[i]) == null) result.Fail(path + ": Mesh 参照が失われました。");
-                if (ra[i].sharedMaterials.Count(m => m != null) > 0 && rb[i].sharedMaterials.Any(m => m == null) && !ra[i].sharedMaterials.Any(m => m == null))
-                    result.Fail(path + ": Material 参照が失われました。");
-                if (Triangles(ra[i]) != Triangles(rb[i])) result.Fail(path + ": 三角形数が変化しました。");
+                var key = Key(r, generated.transform);
+                if (IsAddedPath(AssetPathUtility.HierarchyPath(r.transform, generated.transform))) continue;
+                if (MeshOf(r) == null && renderersBefore.TryGetValue(key, out var before) && MeshOf(before) != null)
+                    result.Fail(key + ": Mesh 参照が失われました。");
+                if (r.sharedMaterials.Any(m => m == null) && renderersBefore.TryGetValue(key, out var b2) && !b2.sharedMaterials.Any(m => m == null))
+                    result.Fail(key + ": Material 参照が失われました。");
             }
             return result;
         }
 
-        static Dictionary<string, string> Describe(GameObject root)
+        static string Key(Renderer r, Transform root) =>
+            AssetPathUtility.HierarchyPath(r.transform, root) + "#" + Array.IndexOf(r.GetComponents<Renderer>(), r);
+
+        static Dictionary<string, List<string>> Describe(GameObject root)
         {
-            var map = new Dictionary<string, string>();
+            var map = new Dictionary<string, List<string>>();
             foreach (var t in root.GetComponentsInChildren<Transform>(true))
                 map[AssetPathUtility.HierarchyPath(t, root.transform)] =
-                    string.Join(",", t.GetComponents<Component>().Select(c => c == null ? "(missing)" : c.GetType().FullName));
+                    t.GetComponents<Component>().Select(c => c == null ? "(missing)" : c.GetType().FullName).ToList();
             return map;
         }
 
@@ -64,16 +72,6 @@ namespace ChikumaTateshina.AssetsOptimizer
             if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
             var mf = r.GetComponent<MeshFilter>();
             return mf != null ? mf.sharedMesh : null;
-        }
-
-        static long Triangles(Renderer r)
-        {
-            var mesh = MeshOf(r);
-            if (mesh == null) return 0;
-            long total = 0;
-            for (int s = 0; s < mesh.subMeshCount; s++)
-                if (mesh.GetTopology(s) == MeshTopology.Triangles) total += mesh.GetIndexCount(s) / 3;
-            return total;
         }
     }
 }

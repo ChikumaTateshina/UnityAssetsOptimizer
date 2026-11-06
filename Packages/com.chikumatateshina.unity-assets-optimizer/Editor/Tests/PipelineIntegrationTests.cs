@@ -82,6 +82,7 @@ namespace ChikumaTateshina.AssetsOptimizer.Tests
             foreach (var def in FeatureCatalog.All) settings.SetMode(def.Id, ExecutionMode.Off);
             settings.SetMode(FeatureIds.Atlas, ExecutionMode.Auto);
             settings.SetMode(FeatureIds.TextureCompression, ExecutionMode.Auto);
+            settings.visualDiff = false;
             return settings;
         }
 
@@ -97,7 +98,8 @@ namespace ChikumaTateshina.AssetsOptimizer.Tests
             Assert.IsNull(dry.Error);
             Assert.IsTrue(dry.CanExecute, string.Join("\n", dry.Plans.SelectMany(p => p.Decision.reasons)));
             Assert.AreEqual(1, dry.Predicted.Get(MetricKeys.UniqueMaterials).value, "predicted unique materials");
-            Assert.AreEqual(MetricKind.Unavailable, dry.Predicted.Get(MetricKeys.DrawCalls).kind, "draw calls must not be fabricated");
+            Assert.AreEqual(MetricKind.Estimated, dry.Predicted.Get(MetricKeys.DrawCalls).kind, "draw calls are model estimates, never measured");
+            Assert.AreEqual(MetricKind.Unavailable, dry.Predicted.Get(MetricKeys.CpuTime).kind, "frame time must not be fabricated");
 
             var result = OptimizerPipeline.Execute(dry, new List<ForceApproval>());
             if (result.RunFolder != null) _runFolders.Add(result.RunFolder);

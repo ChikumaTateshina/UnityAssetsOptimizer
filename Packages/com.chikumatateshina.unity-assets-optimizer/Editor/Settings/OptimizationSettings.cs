@@ -13,6 +13,8 @@ namespace ChikumaTateshina.AssetsOptimizer
         public bool userModified;
     }
 
+    public enum PrefabOutputMode { VariantWhenPossible, Unpacked }
+
     [Serializable]
     public class OptimizationSettings
     {
@@ -30,6 +32,27 @@ namespace ChikumaTateshina.AssetsOptimizer
 
         [Header("Texture Downscale")]
         public int downscaleMaxSize = 2048;
+
+        [Header("Mesh")]
+        /// <summary>SkinnedMeshRenderer も結合対象にするか（要件: 初期 OFF）。</summary>
+        public bool meshCombineSkinned;
+        /// <summary>静的結合の空間グリッド（m）。カリング単位を保つため、セルを跨いで結合しない。</summary>
+        public float meshCombineCellSize = 10f;
+        /// <summary>ポリゴン削減の目標比率（三角形数 × ratio）。</summary>
+        [Range(0.05f, 0.95f)] public float polygonReductionRatio = 0.5f;
+        /// <summary>簡略化の許容誤差（メッシュ境界ボックス対角長に対する比率）。超過したら不採用。</summary>
+        public float decimationMaxError = 0.01f;
+        public float[] lodRatios = { 0.5f, 0.25f };
+        public float[] lodScreenHeights = { 0.5f, 0.2f, 0.05f };
+
+        [Header("Output / Validation")]
+        public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
+        /// <summary>隔離プレビューで前後をレンダリングし、画像差分を参考値として記録する。</summary>
+        public bool visualDiff = true;
+
+        [Header("Mobile Conversion")]
+        /// <summary>モバイル用シェーダー変換のモード（非等価変換は FORCE のみ）。</summary>
+        public ExecutionMode mobileShaderMode = ExecutionMode.Auto;
 
         public static OptimizationSettings CreateDefault(ContentPreset preset)
         {

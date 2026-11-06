@@ -41,25 +41,39 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - Manual Override（`Tools > VRChat Asset Optimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
-### 実装状況（v0.1.0）
+### 実装状況（v0.2.0）
 
 | 機能 | 状態 |
 |---|---|
 | 対象選択・依存解析・スナップショット・トランザクション・復元 | 実装済み |
-| アトラス化 / 同一 Material 統合 / 重複 Texture 検出 | 実装済み（Unity 組み込みシェーダーのみ） |
-| 生成テクスチャの圧縮・解像度制限 | 実装済み |
-| 処理前 / 予測 / 処理後の指標比較、JSON・Markdown レポート | 実装済み |
+| アトラス化 / 同一 Material 統合 / 重複 Texture 検出 | 実装済み（Unity 組み込みシェーダー、lilToon 2.3.1） |
+| テクスチャ圧縮・解像度削減 | 実装済み（元のテクスチャはコピーを作って適用） |
+| メッシュ結合（静的 / SkinnedMesh）・不要頂点属性削除 | 実装済み |
+| Static Batching / GPU Instancing 支援・Lightmap UV 再生成 | 実装済み |
+| ポリゴン削減・LOD 生成・Collider 簡略化 | 実装済み（誤差上限付き） |
+| Prefab Variant での出力 | 実装済み（Prefab Asset、または構造変更のないインスタンス） |
+| 処理前 / 予測 / 処理後の比較、外観の参考比較（画像差分） | 実装済み（Draw Calls はモデル推定、フレーム時間は取得不可） |
+| Avatar Performance Rank | VRChat SDK の公式評価 API で算出（PC / Android / iOS） |
+| Android / iOS 派生版の生成 | 実装済み（SDK 3.9 系で検証。SDK の検証 API で判定、実機検証は対象外） |
+| NDMF でのビルド時適用 | 実装済み（NDMF がある場合のみ有効） |
 | Manual Override（FORCE・監査ログ） | 実装済み |
-| メッシュ結合・頂点属性整理・Mesh Compression | 未実装（Phase 2、常にスキップ） |
-| 描画計測（Draw Calls 等）・Static Batching / GPU Instancing 支援 | 未実装（Phase 3） |
-| Avatar Performance Rank | 統計値のみ。閾値 DB が未検証のためランクは算出不可 |
-| ポリゴン削減・LOD・Collider 簡略化 | 未実装（Phase 4） |
-| Android / iOS 派生版生成 | 未実装（Phase 5） |
+| Mesh Compression | 実装しない（誤差を検証できないため） |
+| Poiyomi | 未対応（シェーダー仕様を未確認） |
+
+詳細は [CompatibilityMatrix.md](Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md) を参照してください。
+
+### NDMF でビルド時に適用する
+
+NDMF（Modular Avatar 等に同梱）が入っているプロジェクトでは、アバターのルートに
+**Add Component → VRChat Asset Optimizer → VAO Build Optimizer (NDMF)** を追加すると、
+アップロード時・Play 時にビルド用のコピーにだけ最適化を適用します（元のアバターやシーンは変更しません）。
+Avatar Optimizer（AAO）と併用する場合は、AAO より前に実行されます。
 
 ## 開発
 
 - パッケージ本体: `Packages/com.chikumatateshina.unity-assets-optimizer/`
-- テスト: Unity の Test Runner（EditMode）。プロジェクトの `Packages/manifest.json` の `testables` にパッケージ名を追加してください（配布 zip にはテストを含めません）
+- テスト: Unity の Test Runner（EditMode）。プロジェクトの `Packages/manifest.json` の `testables` にパッケージ名を追加してください（配布 zip にはテストを含めません）。VRChat SDK・lilToon・NDMF との連携テストは、それらが入ったプロジェクトでのみ実行されます
+- CI: `.github/workflows/test.yml`（GameCI）。リポジトリの Secret に `UNITY_LICENSE`・`UNITY_EMAIL`・`UNITY_PASSWORD` を設定すると実行されます（未設定ならスキップ）
 
 ### リリース手順
 

@@ -136,9 +136,9 @@ namespace ChikumaTateshina.AssetsOptimizer.Tests
         public void UnimplementedOperationNeverExecutesEvenWithForce()
         {
             var settings = OptimizationSettings.CreateDefault(ContentPreset.World);
-            settings.SetMode(FeatureIds.MeshCombine, ExecutionMode.Force);
+            settings.SetMode(FeatureIds.MeshCompression, ExecutionMode.Force);
             var context = new OptimizationContext { Settings = settings, Analysis = new AnalysisReport() };
-            var plans = OptimizationPlanner.Plan(context, new IOptimizationOperation[] { new UnimplementedOperation(FeatureIds.MeshCombine, 2) });
+            var plans = OptimizationPlanner.Plan(context, new IOptimizationOperation[] { new UnimplementedOperation(FeatureIds.MeshCompression, 2, "test") });
             Assert.IsFalse(plans[0].WillExecute);
         }
 

@@ -22,8 +22,9 @@ namespace ChikumaTateshina.AssetsOptimizer
     /// </summary>
     public static class AtlasMeshBuilder
     {
-        public static Mesh Build(Mesh src, SubmeshMapping[] mapping, int slotCount)
+        public static Mesh Build(Mesh src, SubmeshMapping[] mapping, int slotCount, ICollection<VertexAttribute> drop = null)
         {
+            bool Keep(VertexAttribute a) => src.HasVertexAttribute(a) && (drop == null || !drop.Contains(a));
             if (mapping.Length != src.subMeshCount) throw new ArgumentException("サブメッシュ数とマッピング数が一致しません。");
             int vc = src.vertexCount;
             var owner = new int[vc];
@@ -71,7 +72,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             }
 
             int total = vc + dupSource.Count;
-            var mesh = new Mesh { name = src.name + "_atlas" };
+            var mesh = new Mesh { name = src.name + (drop != null && drop.Count > 0 && slotCount == src.subMeshCount ? "_stripped" : "_atlas") };
             mesh.indexFormat = total > 65535 ? IndexFormat.UInt32 : src.indexFormat;
 
             var positions = new List<Vector3>();
@@ -79,21 +80,21 @@ namespace ChikumaTateshina.AssetsOptimizer
             Expand(positions, dupSource);
             mesh.SetVertices(positions);
 
-            if (src.HasVertexAttribute(VertexAttribute.Normal))
+            if (Keep(VertexAttribute.Normal))
             {
                 var normals = new List<Vector3>();
                 src.GetNormals(normals);
                 Expand(normals, dupSource);
                 mesh.SetNormals(normals);
             }
-            if (src.HasVertexAttribute(VertexAttribute.Tangent))
+            if (Keep(VertexAttribute.Tangent))
             {
                 var tangents = new List<Vector4>();
                 src.GetTangents(tangents);
                 Expand(tangents, dupSource);
                 mesh.SetTangents(tangents);
             }
-            if (src.HasVertexAttribute(VertexAttribute.Color))
+            if (Keep(VertexAttribute.Color))
             {
                 if (src.GetVertexAttributeFormat(VertexAttribute.Color) == VertexAttributeFormat.UNorm8)
                 {
@@ -116,7 +117,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             for (int ch = 0; ch < 8; ch++)
             {
                 var attr = VertexAttribute.TexCoord0 + ch;
-                if (!src.HasVertexAttribute(attr)) continue;
+                if (!Keep(attr)) continue;
                 int dim = src.GetVertexAttributeDimension(attr);
                 bool transformUv = ch == 0;
                 if (dim <= 2)
@@ -163,7 +164,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             for (int i = 0; i < slotCount; i++) mesh.SetTriangles(slotTriangles[i], i, false);
 
             CopyBoneWeights(src, mesh, dupSource);
-            CopyBlendShapes(src, mesh, dupSource);
+            CopyBlendShapes(src, mesh, dupSource, Keep(VertexAttribute.Normal), Keep(VertexAttribute.Tangent));
 
             mesh.RecalculateBounds();
             mesh.bounds = src.bounds;
@@ -215,7 +216,7 @@ namespace ChikumaTateshina.AssetsOptimizer
             dst.bindposes = src.bindposes;
         }
 
-        static void CopyBlendShapes(Mesh src, Mesh dst, List<int> dupSource)
+        static void CopyBlendShapes(Mesh src, Mesh dst, List<int> dupSource, bool normals, bool tangents)
         {
             int vc = src.vertexCount;
             int total = vc + dupSource.Count;
@@ -242,12 +243,20 @@ namespace ChikumaTateshina.AssetsOptimizer
                         ndn[vc + i] = dn[dupSource[i]];
                         ndt[vc + i] = dt[dupSource[i]];
                     }
-                    dst.AddBlendShapeFrame(name, weight, ndv, ndn, ndt);
+                    dst.AddBlendShapeFrame(name, weight, ndv, normals ? ndn : null, tangents ? ndt : null);
                 }
             }
         }
 
         /// <summary>サブメッシュが参照する頂点の UV0 範囲。UV0 が無ければ false。</summary>
+        /// <summary>サブメッシュ構成を変えずに属性のみ削除したコピーを作る。</summary>
+        public static Mesh Strip(Mesh src, ICollection<VertexAttribute> drop)
+        {
+            var mapping = new SubmeshMapping[src.subMeshCount];
+            for (int i = 0; i < mapping.Length; i++) mapping[i] = new SubmeshMapping { TransformId = 0, TargetSlot = i };
+            return Build(src, mapping, src.subMeshCount, drop);
+        }
+
         public static bool TryGetSubmeshUvBounds(Mesh mesh, int submesh, out Vector2 min, out Vector2 max)
         {
             min = new Vector2(float.MaxValue, float.MaxValue);

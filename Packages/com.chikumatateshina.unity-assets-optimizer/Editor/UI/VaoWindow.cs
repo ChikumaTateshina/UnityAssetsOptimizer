@@ -25,6 +25,9 @@ namespace ChikumaTateshina.AssetsOptimizer
         AnalysisSession _session;
         DryRunResult _dryRun;
         RunResult _lastRun;
+        DryRunResult _mobileDryRun;
+        RunResult _mobileRun;
+        [SerializeField] int _mobilePlatform;
         List<RunRecord> _runs;
         readonly Dictionary<string, List<RestoreCheckEntry>> _restoreChecks = new Dictionary<string, List<RestoreCheckEntry>>();
         readonly HashSet<string> _expandedPlans = new HashSet<string>();
@@ -145,8 +148,9 @@ namespace ChikumaTateshina.AssetsOptimizer
                     }
                     else if (!implemented)
                     {
+                        var reason = op is UnimplementedOperation u ? u.Reason : "未実装";
                         using (new EditorGUI.DisabledScope(true))
-                            EditorGUILayout.LabelField((_settings.GetMode(def.Id) != ExecutionMode.Off ? "ON" : "OFF") + "（未実装 / Phase " + def.Phase + "・実行されません）", EditorStyles.miniLabel);
+                            EditorGUILayout.LabelField(new GUIContent("実行しません（理由はツールチップ）", reason), EditorStyles.miniLabel);
                     }
                     else
                     {
@@ -179,6 +183,12 @@ namespace ChikumaTateshina.AssetsOptimizer
             _settings.standaloneCrunch = EditorGUILayout.Toggle("PC: Crunch 圧縮", _settings.standaloneCrunch);
             _settings.mobileAstcBlock = EditorGUILayout.IntPopup("Android/iOS: ASTC ブロック", _settings.mobileAstcBlock, AstcBlocks.Select(b => b + "x" + b).ToArray(), AstcBlocks);
             _settings.downscaleMaxSize = EditorGUILayout.IntPopup("自動解像度削減: 最大", _settings.downscaleMaxSize, AtlasSizes.Select(s => s.ToString()).ToArray(), AtlasSizes);
+            _settings.meshCombineSkinned = EditorGUILayout.Toggle(new GUIContent("メッシュ結合: SkinnedMesh も対象", "要件上の初期値は OFF"), _settings.meshCombineSkinned);
+            _settings.meshCombineCellSize = EditorGUILayout.FloatField(new GUIContent("メッシュ結合: 空間セル(m)", "セルを跨いで結合しない（カリング単位の保護）"), _settings.meshCombineCellSize);
+            _settings.polygonReductionRatio = EditorGUILayout.Slider("ポリゴン削減: 目標比率", _settings.polygonReductionRatio, 0.05f, 0.95f);
+            _settings.decimationMaxError = EditorGUILayout.Slider(new GUIContent("簡略化: 許容誤差", "境界ボックス対角長に対する比率。超える縮約は行わない"), _settings.decimationMaxError, 0.001f, 0.05f);
+            _settings.outputMode = (PrefabOutputMode)EditorGUILayout.EnumPopup(new GUIContent("出力形式", "VariantWhenPossible: 元 Prefab の Variant として出力（構造変更のないインスタンス/Prefab Asset のみ）"), _settings.outputMode);
+            _settings.visualDiff = EditorGUILayout.Toggle(new GUIContent("外観の参考比較", "隔離プレビューで前後をレンダリングし画像差分を記録（参考値）"), _settings.visualDiff);
             if (EditorGUI.EndChangeCheck()) SettingsChanged();
             EditorGUI.indentLevel--;
         }
@@ -267,15 +277,30 @@ namespace ChikumaTateshina.AssetsOptimizer
                 "原本（シーン・Prefab・Mesh・Material・Texture）は変更しません。生成物は新しい Prefab として出力されます。";
             if (!EditorUtility.DisplayDialog("最適化の実行確認", message, "実行", "キャンセル")) return;
 
+            _lastRun = ExecuteWithApprovals(_dryRun);
+            _runs = null;
+            if (_lastRun == null) return;
+
+            if (_lastRun.Success)
+            {
+                var first = _lastRun.GeneratedPrefabs.Select(AssetDatabase.LoadAssetAtPath<GameObject>).FirstOrDefault();
+                if (first != null) EditorGUIUtility.PingObject(first);
+            }
+            _dryRun = null;
+        }
+
+        /// <summary>FORCE の個別承認を取得して実行する。承認が拒否された場合は null。</summary>
+        RunResult ExecuteWithApprovals(DryRunResult dryRun)
+        {
             var approvals = new List<ForceApproval>();
-            foreach (var plan in _dryRun.ForcePlans)
+            foreach (var plan in dryRun.ForcePlans)
             {
                 var risks = plan.ForceRisks.Take(15).ToList();
                 var more = plan.ForceRisks.Count > risks.Count ? "\n…他 " + (plan.ForceRisks.Count - risks.Count) + " 件" : string.Empty;
                 var ok = EditorUtility.DisplayDialog("FORCE 承認: " + plan.Operation.DisplayName,
                     "以下の項目を互換性/外観のリスクを受容して処理します。\n予測値の信頼性は低下します。\n\n" + string.Join("\n", risks) + more,
                     "リスクを受容して承認", "中止");
-                if (!ok) return;
+                if (!ok) return null;
                 var approval = new ForceApproval
                 {
                     operationId = plan.Decision.operationId,
@@ -287,27 +312,19 @@ namespace ChikumaTateshina.AssetsOptimizer
                 approvals.Add(approval);
             }
 
+            RunResult result;
             try
             {
-                _lastRun = OptimizerPipeline.Execute(_dryRun, approvals, (m, p) => EditorUtility.DisplayCancelableProgressBar("VRChat Asset Optimizer", m, p));
+                result = OptimizerPipeline.Execute(dryRun, approvals, (m, p) => EditorUtility.DisplayCancelableProgressBar("VRChat Asset Optimizer", m, p));
             }
             finally
             {
                 EditorUtility.ClearProgressBar();
             }
-            _runs = null;
-
-            if (_lastRun.Success)
-            {
-                var first = _lastRun.GeneratedPrefabs.Select(AssetDatabase.LoadAssetAtPath<GameObject>).FirstOrDefault();
-                if (first != null) EditorGUIUtility.PingObject(first);
-            }
-            else
-            {
-                EditorUtility.DisplayDialog(_lastRun.Cancelled ? "キャンセルしました" : "最適化に失敗しました",
-                    (_lastRun.Error ?? string.Empty) + "\n\n生成途中のデータは破棄し、原本は変更していません。\nレポート: " + _lastRun.ReportPath, "OK");
-            }
-            _dryRun = null;
+            if (!result.Success)
+                EditorUtility.DisplayDialog(result.Cancelled ? "キャンセルしました" : "処理に失敗しました",
+                    (result.Error ?? string.Empty) + "\n\n生成途中のデータは破棄し、原本は変更していません。\nレポート: " + result.ReportPath, "OK");
+            return result;
         }
 
         void DrawAnalysisResults()
@@ -325,6 +342,9 @@ namespace ChikumaTateshina.AssetsOptimizer
                 if (!_dryRun.ValidationPassed)
                     EditorGUILayout.HelpBox("Dry Run の検証に失敗しました:\n" + string.Join("\n", _dryRun.ValidationMessages), MessageType.Error);
                 EditorGUILayout.LabelField("必要なスナップショット容量: " + Metric.FormatNumber(_dryRun.SnapshotBytes, "bytes"), EditorStyles.miniLabel);
+                foreach (var k in _dryRun.OutputKinds) EditorGUILayout.LabelField("出力形式: " + k, EditorStyles.miniLabel);
+                if (_dryRun.VisualDiff != null)
+                    EditorGUILayout.LabelField("外観の参考比較（予測）: " + ReportWriter.DescribeDiff(_dryRun.VisualDiff), EditorStyles.wordWrappedMiniLabel);
                 DrawPlans(_dryRun.Plans);
             }
             DrawLastRun();
@@ -380,6 +400,8 @@ namespace ChikumaTateshina.AssetsOptimizer
                         EditorGUILayout.LabelField(p, EditorStyles.miniLabel);
                         if (GUILayout.Button("Ping", GUILayout.Width(50))) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<GameObject>(p));
                     }
+                if (_lastRun.VisualDiff != null)
+                    EditorGUILayout.LabelField("外観の参考比較（処理後）: " + ReportWriter.DescribeDiff(_lastRun.VisualDiff), EditorStyles.wordWrappedMiniLabel);
                 if (_lastRun.Report?.integrity != null)
                     EditorGUILayout.LabelField("原本整合性: " + (_lastRun.Report.integrity.passed ? "OK" : "NG") + "（" + _lastRun.Report.integrity.checkedAssets + " 件）", EditorStyles.miniLabel);
                 foreach (var w in _lastRun.Report?.contextWarnings ?? new List<string>())
@@ -456,22 +478,69 @@ namespace ChikumaTateshina.AssetsOptimizer
 
         void DrawMobileTab()
         {
-            EditorGUILayout.HelpBox("Android/iOS 派生版の生成は Phase 5 の機能です。プラットフォーム能力 DB・Shader Adapter・SDK ビルド検証の確認が完了するまで有効化しません。", MessageType.Info);
-            foreach (VrcPlatform platform in new[] { VrcPlatform.Android, VrcPlatform.iOS })
+            EditorGUILayout.HelpBox("PC 用の選択アセットから Android/iOS 用の派生 Prefab と依存アセットを別に生成します（PC 版は変更しません）。" +
+                                    "アバターは VRChat SDK のシェーダー検証 API で判定し、外観が変わる変換は FORCE（Manual Override）でのみ実行します。自動アップロードは行いません。", MessageType.Info);
+            _mobilePlatform = GUILayout.Toolbar(_mobilePlatform, new[] { "Android", "iOS" });
+            var platform = _mobilePlatform == 0 ? VrcPlatform.Android : VrcPlatform.iOS;
+            var kind = _mobilePlatform == 0 ? RunKind.Android : RunKind.iOS;
+            bool enabled = CapabilityDatabase.IsConversionEnabled(platform, _settings.preset, out var reason);
+            EditorGUILayout.HelpBox((enabled ? "有効: " : "無効: ") + reason, enabled ? MessageType.None : MessageType.Warning);
+
+            if (ManualOverride.IsEnabled)
             {
-                EditorGUILayout.LabelField(platform.ToString(), EditorStyles.boldLabel);
-                foreach (ContentPreset content in Enum.GetValues(typeof(ContentPreset)))
+                var mode = (ExecutionMode)EditorGUILayout.EnumPopup("シェーダー変換モード", _settings.mobileShaderMode);
+                if (mode != _settings.mobileShaderMode)
                 {
-                    CapabilityDatabase.IsConversionEnabled(platform, content, out var reason);
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        EditorGUILayout.LabelField(content.ToString(), GUILayout.Width(80));
-                        EditorGUILayout.LabelField("変換不可: " + reason, EditorStyles.wordWrappedMiniLabel);
-                    }
+                    _settings.mobileShaderMode = mode;
+                    SettingsChanged();
+                    _mobileDryRun = null;
                 }
             }
-            using (new EditorGUI.DisabledScope(true))
-                GUILayout.Button("派生版を生成（無効）");
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                using (new EditorGUI.DisabledScope(!enabled || _targets.Count == 0))
+                {
+                    if (GUILayout.Button("Dry Run（" + platform + "）", GUILayout.Height(28)))
+                    {
+                        try
+                        {
+                            var session = OptimizerPipeline.Analyze(_targets.Where(t => t != null), _settings, kind);
+                            _mobileDryRun = OptimizerPipeline.DryRun(session, (m, p) => EditorUtility.DisplayCancelableProgressBar("VRChat Asset Optimizer", m, p));
+                        }
+                        finally
+                        {
+                            EditorUtility.ClearProgressBar();
+                        }
+                    }
+                }
+                bool stale = _mobileDryRun != null && (_mobileDryRun.Session.SettingsHash != _settings.ComputeHash() || _mobileDryRun.Session.Kind != kind);
+                using (new EditorGUI.DisabledScope(_mobileDryRun == null || stale || !_mobileDryRun.CanExecute))
+                {
+                    if (GUILayout.Button(platform + " 派生版を生成", GUILayout.Height(28))) _mobileRun = ExecuteWithApprovals(_mobileDryRun);
+                }
+            }
+
+            if (_mobileDryRun != null && _mobileDryRun.Session.Kind == kind)
+            {
+                if (_mobileDryRun.Error != null) EditorGUILayout.HelpBox(_mobileDryRun.Error, MessageType.Error);
+                if (_mobileDryRun.Conversion != null)
+                {
+                    EditorGUILayout.LabelField("予測: " + _mobileDryRun.Conversion.StateLabel + "（実機検証: 未実施）", EditorStyles.boldLabel);
+                    foreach (var r in _mobileDryRun.Conversion.reasons) EditorGUILayout.LabelField(r, EditorStyles.wordWrappedMiniLabel);
+                }
+                DrawPlans(_mobileDryRun.Plans);
+            }
+            if (_mobileRun != null)
+            {
+                if (!_mobileRun.Success) EditorGUILayout.HelpBox("失敗（ロールバック済み）: " + _mobileRun.Error, MessageType.Error);
+                else
+                {
+                    EditorGUILayout.HelpBox("生成完了: " + _mobileRun.RunFolder + "\n状態: " + (_mobileRun.Conversion?.StateLabel ?? "—") + " / 実機検証: 未実施", MessageType.Info);
+                    foreach (var p in _mobileRun.GeneratedPrefabs)
+                        if (GUILayout.Button("Ping: " + p)) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<GameObject>(p));
+                }
+            }
         }
 
         // ------------------------------------------------------------------ 履歴タブ
@@ -501,7 +570,7 @@ namespace ChikumaTateshina.AssetsOptimizer
                     using (new EditorGUILayout.HorizontalScope())
                     {
                         if (GUILayout.Button("生成物を表示"))
-                            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(run.RunFolder + "/" + VaoInfo.GeneratedFolderName));
+                            EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(run.RunFolder));
                         if (GUILayout.Button("レポート"))
                             EditorUtility.OpenWithDefaultApp(System.IO.Path.Combine(VaoInfo.ProjectRoot, run.RunFolder, VaoInfo.ReportsFolderName, "report.md"));
                         if (GUILayout.Button("原本を検証")) _restoreChecks[run.RunFolder] = RestoreService.CheckOriginals(m);

@@ -1,15 +1,31 @@
 # Changelog
 
+## [0.2.0] - 2026-11-07
+
+### Added
+- lilToon 2.3.1 の Shader Adapter（メイン UV 系テクスチャのアトラス化。UV 非依存テクスチャの同一性・UV 関連機能の前提条件を検証）
+- メッシュ結合（静的: 空間セル単位 / SkinnedMesh: 設定で有効化。アニメーション・参照・他コンポーネントを持つものは対象外）
+- Static Batching 支援、GPU Instancing 支援（Material をコピーして有効化）、Lightmap UV 再生成
+- 不要頂点属性の削除（シェーダーアダプターが使用属性を宣言している場合のみ）
+- ポリゴン削減（QEM / half-edge collapse。誤差上限・境界・UV 継ぎ目・Material 境界を保護）、LOD 生成、MeshCollider 簡略化
+- 元テクスチャの圧縮・解像度削減（コピーを生成して適用。元の Importer は変更しない）
+- Prefab Variant 出力（Prefab Asset、または構造変更のないインスタンスの場合）
+- VRChat SDK 公式評価 API による Avatar Performance Rank（PC / Android / iOS）
+- Android / iOS 派生版の生成（SDK のシェーダー検証 API で判定、非等価変換は FORCE のみ）
+- NDMF ビルド時適用（`VAO Build Optimizer (NDMF)` コンポーネント、NDMF がある場合のみ有効）
+- Draw Calls / SetPass / Batches のモデル推定、外観の参考比較（画像差分）
+- テスト追加、GitHub Actions でのテスト（GameCI、Secret 未設定時はスキップ）
+
+### Changed
+- 各処理の直後にその処理の検証を行う順序に変更
+- 構造検証は、各処理が登録した構造変更（結合で外した Renderer、LOD の追加など）だけを許容する
+
+### Not implemented
+- Mesh Compression（誤差を検証できないため）、Poiyomi Adapter（未検証）
+
 ## [0.1.0] - 2026-11-07
 
 ### Added
-- 非破壊パイプライン（Resolve → Snapshot → Analyze → Plan → Dry Run → Approve → Generate → Validate → Commit → Post-measure）
-- 原本スナップショット（内容ハッシュ・GUID・.meta・階層構成）、トランザクション（ステージング＋ロールバック）、原本整合性検証
-- 履歴/復元: 生成物の破棄、スナップショットからの原本書き戻し
-- テクスチャアトラス化（Unity 組み込みシェーダー対応、決定的パッカー、頂点分離・サブメッシュ統合）
-- 同一 Material 統合、重複 Texture 検出
-- 生成テクスチャの圧縮（PC / Android・iOS ASTC）・解像度制限
-- 指標の処理前/予測/処理後比較（確定計算・推定・取得不可の区分表示）
-- JSON / Markdown レポート
-- Manual Override（OFF/AUTO/FORCE、個別承認・監査ログ）
-- Avatar Rank / Mobile Conversion の枠組み（未検証データでは算出・変換しない）
+- 非破壊パイプライン、スナップショット、トランザクション、復元
+- アトラス化（Unity 組み込みシェーダー）、同一 Material 統合、重複 Texture 検出、生成テクスチャの圧縮
+- 指標の比較、JSON / Markdown レポート、Manual Override

@@ -1,11 +1,12 @@
 {
   "schemaVersion": 1,
-  "unityVersionRange": "VERIFIED_RANGE_REQUIRED",
-  "vrcSdkVersionRange": "VERIFIED_RANGE_REQUIRED",
+  "unityVersionRange": ">=2022.3.0 <2022.4.0",
+  "vrcSdkVersionRange": ">=3.9.0 <3.10.0",
   "platform": "Android",
   "contentType": "Avatar",
-  "shaderAdapterIds": [],
-  "textureFormats": [],
-  "performanceRuleSetId": "VERIFIED_RULESET_REQUIRED",
-  "verified": false
+  "shaderAdapterIds": ["Standard->VRChat/Mobile/Standard Lite", "Legacy/Mobile Diffuse->VRChat/Mobile/Diffuse", "Unlit/Texture->VRChat/Mobile/Toon Lit (FORCE)", "lilToon(opaque)->VRChat/Mobile/Toon Standard (FORCE)"],
+  "textureFormats": ["ASTC_4x4", "ASTC_5x5", "ASTC_6x6", "ASTC_8x8"],
+  "performanceRuleSetId": "sdk-official",
+  "verified": true,
+  "verification": "VRChat SDK 3.9.0 のソース（AvatarValidation.ShaderWhiteList / FindIllegalShaders、VRCMultiPlatformBuild の iOS 対象、Sample Assets/Shaders/Mobile のプロパティ）で確認。Avatar は SDK のシェーダー検証 API で判定。"
 }

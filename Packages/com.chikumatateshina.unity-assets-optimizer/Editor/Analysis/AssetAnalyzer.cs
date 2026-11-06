@@ -27,6 +27,10 @@ namespace ChikumaTateshina.AssetsOptimizer
         public bool AnimatedMaterial;
         public bool ScriptReferenced;
         public bool UdonOnSameObject;
+        /// <summary>安全リストを含む任意のコンポーネントから参照されている（結合・削除の判定用）。</summary>
+        public bool ReferencedByAnyComponent;
+        /// <summary>自身または祖先がアニメーションの対象（プロパティ種別を問わない）。</summary>
+        public bool AnimatedAny;
 
         /// <summary>クローン上の Renderer を特定するためのキー。</summary>
         public string Key => MakeKey(RootIndex, Path, ComponentIndex);
@@ -40,6 +44,33 @@ namespace ChikumaTateshina.AssetsOptimizer
         public DependencyGraph Graph;
         public readonly List<RendererInfo> Renderers = new List<RendererInfo>();
         public readonly HashSet<Material> ScriptReferencedMaterials = new HashSet<Material>();
+        /// <summary>依存 AnimationClip の全バインディングパス。</summary>
+        public readonly HashSet<string> AnimatedBindingPaths = new HashSet<string>();
+        /// <summary>任意の MonoBehaviour から参照される GameObject/Component の Transform。</summary>
+        public readonly HashSet<Transform> ReferencedTransforms = new HashSet<Transform>();
+
+        /// <summary>
+        /// t またはその祖先（root まで）がアニメーションのバインディング対象になり得るか。
+        /// パスは末尾一致で保守的に判定する（中間の Animator からの相対パスにも対応）。
+        /// </summary>
+        public bool IsAnimated(Transform t, Transform root)
+        {
+            if (AnimatedBindingPaths.Count == 0) return false;
+            for (var cur = t; cur != null; cur = cur.parent)
+            {
+                var namePath = AssetPathUtility.NamePath(cur, root);
+                foreach (var bp in AnimatedBindingPaths)
+                {
+                    if (bp.Length == 0)
+                    {
+                        if (cur == root || cur.GetComponent<Animator>() != null || cur.GetComponent<Animation>() != null) return true;
+                    }
+                    else if (namePath == bp || namePath.EndsWith("/" + bp, StringComparison.Ordinal)) return true;
+                }
+                if (cur == root) break;
+            }
+            return false;
+        }
         public readonly List<AnalysisIssue> Issues = new List<AnalysisIssue>();
         public bool HasAvatarDescriptor;
         public bool HasUdon;
@@ -157,6 +188,7 @@ namespace ChikumaTateshina.AssetsOptimizer
                             if (rendererLookup.TryGetValue(r, out var info)) info.UdonOnSameObject = true;
                     }
 
+                    RecordAllReferences(mb, report, rendererLookup);
                     if (RendererReferenceSafeTypes.Contains(typeName)) continue;
                     ScanScriptReferences(mb, report, rendererLookup);
                 }
@@ -166,6 +198,24 @@ namespace ChikumaTateshina.AssetsOptimizer
                 report.Issues.Add(new AnalysisIssue { Source = "Udon", Message = "UdonBehaviour が含まれます。実行時のマテリアル操作は静的解析できないため、同一オブジェクトの Renderer とスクリプト参照された Renderer/Material は通常モードで処理しません。" });
             if (report.HasBuildTimeTools)
                 report.Issues.Add(new AnalysisIssue { Source = "Build-time tools", Message = "Modular Avatar / VRCFury 等のビルド時変換ツールが含まれます。ビルド後の構成は評価できないため、指標は「評価不完全」として扱います。" });
+        }
+
+        static void RecordAllReferences(MonoBehaviour mb, AnalysisReport report, Dictionary<Renderer, RendererInfo> lookup)
+        {
+            var so = new SerializedObject(mb);
+            var prop = so.GetIterator();
+            while (prop.Next(true))
+            {
+                if (prop.propertyType != SerializedPropertyType.ObjectReference) continue;
+                var value = prop.objectReferenceValue;
+                Transform t = value is GameObject g ? g.transform : value is Component c ? c.transform : null;
+                if (t == null || EditorUtility.IsPersistent(t) || prop.propertyPath == "m_GameObject") continue;
+                report.ReferencedTransforms.Add(t);
+                if (value is Renderer r && lookup.TryGetValue(r, out var info)) info.ReferencedByAnyComponent = true;
+                if (value is GameObject go)
+                    foreach (var gr in go.GetComponents<Renderer>())
+                        if (lookup.TryGetValue(gr, out var gi)) gi.ReferencedByAnyComponent = true;
+            }
         }
 
         static void ScanScriptReferences(MonoBehaviour mb, AnalysisReport report, Dictionary<Renderer, RendererInfo> lookup)
@@ -193,6 +243,8 @@ namespace ChikumaTateshina.AssetsOptimizer
             var bindingPaths = new HashSet<string>();
             foreach (var clip in report.Graph.DependencyObjects.OfType<AnimationClip>())
             {
+                foreach (var b in AnimationUtility.GetCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);
+                foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);
                 foreach (var b in AnimationUtility.GetCurveBindings(clip))
                     if (typeof(Renderer).IsAssignableFrom(b.type) && b.propertyName.StartsWith("material.", StringComparison.Ordinal))
                         bindingPaths.Add(b.path);
@@ -200,6 +252,8 @@ namespace ChikumaTateshina.AssetsOptimizer
                     if (typeof(Renderer).IsAssignableFrom(b.type) && b.propertyName.StartsWith("m_Materials", StringComparison.Ordinal))
                         bindingPaths.Add(b.path);
             }
+            foreach (var info in report.Renderers)
+                info.AnimatedAny = report.IsAnimated(info.Renderer.transform, report.Graph.Roots[info.RootIndex].transform);
             if (bindingPaths.Count == 0) return;
 
             foreach (var info in report.Renderers)
