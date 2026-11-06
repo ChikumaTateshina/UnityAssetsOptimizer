@@ -1,10 +1,10 @@
-# VRChat Asset Optimizer (UnityAssetsOptimizer)
+# UnityAssetsOptimizer (UnityAssetsOptimizer)
 
 VRChat のワールド/アバター向けの **非破壊** アセット最適化ツールです（Unity Editor 拡張）。
 選択した GameObject と子階層に対してテクスチャアトラス化・Material 統合・テクスチャ圧縮を行い、
-**原本を一切変更せず** 新しい Prefab を `Assets/VAOGenerated/` に生成します。
+**原本を一切変更せず** 新しい Prefab を `Assets/UnityAssetsOptimizer/` に生成します。
 
-- 検証状況: [CompatibilityMatrix.md](Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md)
+- 検証状況: [CompatibilityMatrix.md](Packages/com.chikumatateshina.unityassetsoptimizer/Documentation~/CompatibilityMatrix.md)
 
 ## インストール（VCC / VPM）
 
@@ -14,13 +14,13 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
      ```
      https://chikumatateshina.github.io/UnityAssetsOptimizer/index.json
      ```
-2. VCC でプロジェクトの **Manage Project** を開き、**VRChat Asset Optimizer** を追加します。
+2. VCC でプロジェクトの **Manage Project** を開き、**UnityAssetsOptimizer** を追加します。
 
 対応: Unity 2022.3（Built-in Render Pipeline）。VRChat SDK へのコンパイル時依存はありません。
 
 ## 使い方
 
-1. `Tools > VRChat Asset Optimizer > Open` でウィンドウを開く
+1. `Tools > UnityAssetsOptimizer > Open` でウィンドウを開く
 2. Hierarchy / Project で対象を選択し「現在の選択を取り込む」
 3. プリセット（World / Avatar）と機能の ON/OFF を選ぶ
 4. **解析** → 現在値と問題点を確認
@@ -36,9 +36,9 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - 原本（シーン・Prefab・Mesh・Material・Texture）への書き込み禁止。書き込みはステージング領域に限定
 - 未対応シェーダー・UV タイル・スクリプト参照・マテリアルアニメーション等は通常モードでスキップし、理由を表示
 - 選択外のシーンオブジェクトへの参照や Missing Script がある場合は実行しない
-- 失敗・キャンセル時は生成途中のデータを破棄（ロールバック）し、レポートを `Library/VAOLogs/` に保存
+- 失敗・キャンセル時は生成途中のデータを破棄（ロールバック）し、レポートを `Library/UnityAssetsOptimizer/Logs/` に保存
 - 算出できない指標（Draw Calls 等）は「算出不可」と表示し、数値を補完しない
-- Manual Override（`Tools > VRChat Asset Optimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
+- Manual Override（`Tools > UnityAssetsOptimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
 ### 実装状況（v0.3.0）
@@ -60,18 +60,18 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 | Mesh Compression | 実装しない（誤差を検証できないため） |
 | Poiyomi Pro / ロック済み Poiyomi | 未対応（Pro は未確認。ロック済みはロック解除してから実行） |
 
-詳細は [CompatibilityMatrix.md](Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md) を参照してください。
+詳細は [CompatibilityMatrix.md](Packages/com.chikumatateshina.unityassetsoptimizer/Documentation~/CompatibilityMatrix.md) を参照してください。
 
 ### NDMF でビルド時に適用する
 
 NDMF（Modular Avatar 等に同梱）が入っているプロジェクトでは、アバターのルートに
-**Add Component → VRChat Asset Optimizer → VAO Build Optimizer (NDMF)** を追加すると、
+**Add Component → UnityAssetsOptimizer → Build Optimizer (NDMF)** を追加すると、
 アップロード時・Play 時にビルド用のコピーにだけ最適化を適用します（元のアバターやシーンは変更しません）。
 Avatar Optimizer（AAO）と併用する場合は、AAO より前に実行されます。
 
 ## 開発
 
-- パッケージ本体: `Packages/com.chikumatateshina.unity-assets-optimizer/`
+- パッケージ本体: `Packages/com.chikumatateshina.unityassetsoptimizer/`
 - テスト: Unity の Test Runner（EditMode）。プロジェクトの `Packages/manifest.json` の `testables` にパッケージ名を追加してください（配布 zip にはテストを含めません）。VRChat SDK・lilToon・NDMF との連携テストは、それらが入ったプロジェクトでのみ実行されます
 - CI: `.github/workflows/test.yml`（GameCI）。リポジトリの Secret に `UNITY_LICENSE`・`UNITY_EMAIL`・`UNITY_PASSWORD` を設定すると実行されます（未設定ならスキップ）
 

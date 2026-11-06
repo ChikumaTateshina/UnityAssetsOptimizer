@@ -1,6 +1,6 @@
 # ------------------------------------------------------------
 # 公開するのは次のみ:
-#   Packages/com.chikumatateshina.unity-assets-optimizer/ (パッケージ本体)
+#   Packages/com.chikumatateshina.unityassetsoptimizer/ (パッケージ本体)
 #   .github/ (リリース・VPM リスティング生成)
 #   README.md / LICENSE / .gitignore / .gitattributes
 # ------------------------------------------------------------

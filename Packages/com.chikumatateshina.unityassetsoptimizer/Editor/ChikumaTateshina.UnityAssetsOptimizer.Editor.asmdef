@@ -1,0 +1,16 @@
+{
+    "name": "ChikumaTateshina.UnityAssetsOptimizer.Editor",
+    "rootNamespace": "ChikumaTateshina.UnityAssetsOptimizer",
+    "references": [],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

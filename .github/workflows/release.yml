@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 env:
-  PACKAGE_NAME: com.chikumatateshina.unity-assets-optimizer
+  PACKAGE_NAME: com.chikumatateshina.unityassetsoptimizer
 
 jobs:
   release:

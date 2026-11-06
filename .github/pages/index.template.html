@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>VRChat Asset Optimizer</title>
+<title>UnityAssetsOptimizer</title>
 <meta name="description" content="VRChat のアバター・ワールド向けの非破壊アセット最適化ツール（Unity エディタ拡張）。VCC から導入できます。">
 <style>
   :root {
@@ -86,7 +86,7 @@
 <div class="wrap">
   <header>
     <div class="badge">最新版 v{{LATEST_VERSION}}</div>
-    <h1>VRChat Asset Optimizer</h1>
+    <h1>UnityAssetsOptimizer</h1>
     <p class="tagline">VRChat のアバター・ワールドを軽量化する Unity エディタ拡張です。元のデータは一切変更せず、最適化した Prefab を別に生成します。</p>
     <div class="actions">
       <a class="btn btn-primary" href="{{VCC_URL}}">VCC に追加</a>
@@ -114,7 +114,7 @@
   <section>
     <h2>安心して使うための設計</h2>
     <ul class="plain">
-      <li>元のシーン・Prefab・Mesh・Material・Texture は変更しません。生成物は <code>Assets/VAOGenerated/</code> に出力されます。</li>
+      <li>元のシーン・Prefab・Mesh・Material・Texture は変更しません。生成物は <code>Assets/UnityAssetsOptimizer/</code> に出力されます。</li>
       <li>実行前にスナップショットを取り、失敗やキャンセル時は生成途中のデータを破棄します。</li>
       <li>対応できない設定は推測で変換せず、理由を表示してスキップします。</li>
       <li>処理前・予測・処理後の数値を比較でき、算出できない値は「算出不可」と表示します。</li>
@@ -126,10 +126,10 @@
     <h2>導入と使い方</h2>
     <ol class="steps">
       <li>上の「VCC に追加」を押して、リポジトリを VCC に追加します。</li>
-      <li>VCC でプロジェクトの <b>Manage Project</b> を開き、<b>VRChat Asset Optimizer</b> を追加します。</li>
-      <li>Unity で <code>Tools &gt; VRChat Asset Optimizer &gt; Open</code> を開き、対象を選んで「解析」→「Dry Run」→「最適化を実行」の順に進めます。</li>
+      <li>VCC でプロジェクトの <b>Manage Project</b> を開き、<b>UnityAssetsOptimizer</b> を追加します。</li>
+      <li>Unity で <code>Tools &gt; UnityAssetsOptimizer &gt; Open</code> を開き、対象を選んで「解析」→「Dry Run」→「最適化を実行」の順に進めます。</li>
     </ol>
-    <p class="hint">対応環境: Unity 2022.3（Built-in Render Pipeline）。詳しい対応状況は <a href="https://github.com/{{REPO}}/blob/main/Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md">互換性の一覧</a> を参照してください。</p>
+    <p class="hint">対応環境: Unity 2022.3（Built-in Render Pipeline）。詳しい対応状況は <a href="https://github.com/{{REPO}}/blob/main/Packages/com.chikumatateshina.unityassetsoptimizer/Documentation~/CompatibilityMatrix.md">互換性の一覧</a> を参照してください。</p>
   </section>
 
   <section>

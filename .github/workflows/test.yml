@@ -11,7 +11,7 @@ on:
 
 env:
   UNITY_VERSION: 2022.3.22f1
-  PACKAGE_NAME: com.chikumatateshina.unity-assets-optimizer
+  PACKAGE_NAME: com.chikumatateshina.unityassetsoptimizer
 
 jobs:
   editmode:

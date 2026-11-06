@@ -15,9 +15,9 @@ import urllib.parse
 import urllib.request
 import zipfile
 
-PACKAGE_NAME = os.environ.get("PACKAGE_NAME", "com.chikumatateshina.unity-assets-optimizer")
+PACKAGE_NAME = os.environ.get("PACKAGE_NAME", "com.chikumatateshina.unityassetsoptimizer")
 LISTING_ID = "com.chikumatateshina.vpm"
-LISTING_NAME = "ChikumaTateshina VPM Repository"
+LISTING_NAME = "UnityAssetsOptimizer"
 AUTHOR = "ChikumaTateshina"
 
 

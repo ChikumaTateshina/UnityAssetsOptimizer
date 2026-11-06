@@ -1,0 +1,24 @@
+{
+    "name": "ChikumaTateshina.UnityAssetsOptimizer.Ndmf.Runtime",
+    "rootNamespace": "ChikumaTateshina.UnityAssetsOptimizer.Ndmf",
+    "references": [
+        "nadena.dev.ndmf.runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "UNITY_ASSETS_OPTIMIZER_NDMF"
+    ],
+    "versionDefines": [
+        {
+            "name": "nadena.dev.ndmf",
+            "expression": "1.5.0",
+            "define": "UNITY_ASSETS_OPTIMIZER_NDMF"
+        }
+    ],
+    "noEngineReferences": false
+}
