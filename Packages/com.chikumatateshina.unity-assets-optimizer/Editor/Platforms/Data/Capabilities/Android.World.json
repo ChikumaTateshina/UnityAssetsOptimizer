@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "unityVersionRange": "VERIFIED_RANGE_REQUIRED",
+  "vrcSdkVersionRange": "VERIFIED_RANGE_REQUIRED",
+  "platform": "Android",
+  "contentType": "World",
+  "shaderAdapterIds": [],
+  "textureFormats": [],
+  "performanceRuleSetId": "VERIFIED_RULESET_REQUIRED",
+  "verified": false
+}

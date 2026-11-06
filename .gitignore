@@ -1,0 +1,21 @@
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vs/
+.vscode/
+.idea/
+*.csproj
+*.sln
+*.user
+
+# Unity (リポジトリ直下を Unity プロジェクトとして開いた場合)
+/[Ll]ibrary/
+/[Tt]emp/
+/[Oo]bj/
+/[Bb]uild/
+/[Ll]ogs/
+/[Uu]ser[Ss]ettings/
+
+# Build output
+_site/
+*.zip

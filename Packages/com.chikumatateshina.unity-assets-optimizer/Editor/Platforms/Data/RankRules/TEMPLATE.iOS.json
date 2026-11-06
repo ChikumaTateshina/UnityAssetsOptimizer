@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "ruleSetId": "TEMPLATE-iOS",
+  "platform": "iOS",
+  "sdkMinVersion": "",
+  "sdkMaxVersionExclusive": "",
+  "verified": false,
+  "source": "TEMPLATE: 公式ドキュメントで検証した閾値を記入し、検証後に verified を true にしてください。未検証のままでは評価に使用されません。",
+  "ranks": ["Excellent", "Good", "Medium", "Poor"],
+  "stats": [
+    { "key": "triangles", "thresholds": [] },
+    { "key": "skinned_meshes", "thresholds": [] },
+    { "key": "basic_meshes", "thresholds": [] },
+    { "key": "material_slots", "thresholds": [] },
+    { "key": "bones", "thresholds": [] }
+  ]
+}

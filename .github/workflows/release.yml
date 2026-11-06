@@ -1,0 +1,74 @@
+name: Release & VPM Listing
+
+# v*.*.* タグの push でパッケージ zip を GitHub Release に公開し、
+# 全リリースから VPM リスティング (index.json) を生成して GitHub Pages へデプロイする。
+# 手動実行 (workflow_dispatch) ではリスティングの再生成のみを行う。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  PACKAGE_NAME: com.chikumatateshina.unity-assets-optimizer
+
+jobs:
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check version
+        id: version
+        run: |
+          VERSION=$(jq -r .version "Packages/${PACKAGE_NAME}/package.json")
+          if [ "v${VERSION}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${VERSION}"
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Build package zip
+        run: |
+          cd "Packages/${PACKAGE_NAME}"
+          zip -r -X "${GITHUB_WORKSPACE}/${PACKAGE_NAME}-${{ steps.version.outputs.version }}.zip" . -x ".*"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ steps.version.outputs.version }}
+          files: |
+            ${{ env.PACKAGE_NAME }}-${{ steps.version.outputs.version }}.zip
+            Packages/${{ env.PACKAGE_NAME }}/package.json
+
+  listing:
+    needs: release
+    if: ${{ !cancelled() && needs.release.result != 'failure' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build VPM listing
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 .github/scripts/build_listing.py --out _site
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
