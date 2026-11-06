@@ -41,12 +41,12 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - Manual Override（`Tools > VRChat Asset Optimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
-### 実装状況（v0.2.0）
+### 実装状況（v0.3.0）
 
 | 機能 | 状態 |
 |---|---|
 | 対象選択・依存解析・スナップショット・トランザクション・復元 | 実装済み |
-| アトラス化 / 同一 Material 統合 / 重複 Texture 検出 | 実装済み（Unity 組み込みシェーダー、lilToon 2.3.1） |
+| アトラス化 / 同一 Material 統合 / 重複 Texture 検出 | 実装済み（Unity 組み込みシェーダー、lilToon 2.3.1、Poiyomi Toon 10.0.29） |
 | テクスチャ圧縮・解像度削減 | 実装済み（元のテクスチャはコピーを作って適用） |
 | メッシュ結合（静的 / SkinnedMesh）・不要頂点属性削除 | 実装済み |
 | Static Batching / GPU Instancing 支援・Lightmap UV 再生成 | 実装済み |
@@ -58,7 +58,7 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 | NDMF でのビルド時適用 | 実装済み（NDMF がある場合のみ有効） |
 | Manual Override（FORCE・監査ログ） | 実装済み |
 | Mesh Compression | 実装しない（誤差を検証できないため） |
-| Poiyomi | 未対応（シェーダー仕様を未確認） |
+| Poiyomi Pro / ロック済み Poiyomi | 未対応（Pro は未確認。ロック済みはロック解除してから実行） |
 
 詳細は [CompatibilityMatrix.md](Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md) を参照してください。
 

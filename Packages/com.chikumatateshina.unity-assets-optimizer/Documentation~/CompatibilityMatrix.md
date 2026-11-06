@@ -3,7 +3,7 @@
 実装仕様書 §16 に基づき、対象 Unity / VRChat SDK / 外部パッケージの公開 API・仕様の検証状況を記録する。
 **「未検証」の項目は実装済みとして扱わず、該当機能は無効（取得不可/変換不可/スキップ）とする。**
 
-最終更新: 2026-11-07（v0.2.0）
+最終更新: 2026-11-07（v0.3.0）
 
 ## 検証環境
 
@@ -13,6 +13,7 @@
 | VRChat SDK Base / Avatars | 3.9.0 | パッケージのソースと公開クラスを確認し、SDK 入りプロジェクトで EditMode テスト |
 | NDMF | 1.9.4 | `Plugin<T>` / `BuildPhase.Optimizing` / `Sequence.Run` / `INDMFEditorOnly` のソースを確認し、`AvatarProcessor.ProcessAvatar` でテスト |
 | lilToon | 2.3.1 | `Shader/lts*.shader` と `Includes/lil_common_frag.hlsl` でテクスチャの UV を確認し、テスト |
+| Poiyomi Toon（無料版） | 10.0.29（ThryEditor 2.74.4） | `Shaders/10.0/Toon/*.shader` の全サンプル呼び出しを抽出して分類し、テスト |
 
 ## Shader Adapter（アトラス化）
 
@@ -22,13 +23,20 @@
 | unity.unlit-* / legacy-diffuse / mobile-diffuse | Unlit/Texture, Unlit/Transparent(+Cutout), Legacy Shaders/Diffuse, Mobile/Diffuse | _MainTex | 対応 |
 | liltoon | lilToon（通常/Cutout/Transparent/OnePass/TwoPass、各 Outline、Lite 系） | メイン UV（`uvMain`）でサンプルされるもの: Main/BaseMap/AlphaMask/Bump/Shadow*/Rim*/Matcap マスク/Emission(2nd)/Outline 等 | 対応（下記条件） |
 | — | lilToon Fur/Gem/Refraction/Tessellation/FakeShadow/Overlay/Multi/OutlineOnly | — | 非対応（UV 以外の処理を含むため未検証） |
-| — | Poiyomi | — | **未検証**（ソースを入手・確認していないため対象外） |
+| poiyomi-toon | .poiyomi/Poiyomi Toon, Two Pass, Outline Early, World | `poiUV(poiMesh.uv[<名前>UV], <名前>_ST)` + パン でサンプルされる 71 テクスチャ（Main/Bump/AlphaMask/Emission 0-3/Matcap マスク/Rim/Shadow/Outline マスク 等） | 対応（下記条件） |
+| — | Poiyomi Grab Pass / Lil Fur 版、ロック済み（Hidden/Locked/...）、Poiyomi Pro | — | 非対応（未検証。ロック済みはロック解除後に実行） |
 | — | VRChat/Mobile/* | — | アトラス対象外（変換先として使用） |
 
 lilToon の条件（いずれかに該当すると AUTO でアトラス化しない）:
 - MatCap・グラデーション・ディザ・Ramp テクスチャがグループ内で異なる（UV に依存しないため同一である必要がある）
 - 2nd/3rd メイン、2nd ノーマル、異方性、Glitter、視差、AudioLink、Dissolve のテクスチャ設定、または機能が有効
 - `_MainTex_ScrollRotate`・`_OutlineTex_ScrollRotate`・発光マップの UV アニメーション、`_ShiftBackfaceUV`、発光マップの UV モード ≠ UV0、UDIM Discard
+
+Poiyomi の条件（いずれかに該当すると AUTO でアトラス化しない）:
+- 設定されたテクスチャの UV 選択（`<名前>UV`）が UV0 以外、パン（`<名前>Pan`）が 0 以外、Stochastic が有効、発光マップの Center Out が有効
+- UV0 の全体 UV 設定（`_UVSettingsTiling0/Offset0/Angle0/Pan0/Rotate0`）が単位値でない
+- 視差（`_PoiParallax`）、Pixel Mode、Video Effects、UDIM Discard、Text、UV Distortion のいずれかが有効
+- MatCap・Toon Ramp・LUT（`_PoiSkinLUT` / `_SkinLUT` / `_ClothDFG`）・グリフ・歪みフローがグループ内で異なる（UV に依存しないかシェーダー既定値のため、同一である必要がある）
 
 共通の前提: 全チャンネルの Tiling/Offset が単位値、サブメッシュの UV0 が [0,1] 内、テクスチャが 2D・Default（ノーマルは NormalMap かつ PNG/JPEG）。
 
@@ -61,6 +69,7 @@ lilToon の条件（いずれかに該当すると AUTO でアトラス化しな
 | Legacy/Mobile Diffuse（_Color が白） | VRChat/Mobile/Diffuse | ○ |
 | Unlit/Texture | VRChat/Mobile/Toon Lit | × FORCE のみ（Unlit → Lit） |
 | lilToon（不透明） | VRChat/Mobile/Toon Standard | × FORCE のみ（影・MatCap・輪郭等は失われる） |
+| Poiyomi Toon（Rendering Preset = Opaque） | VRChat/Mobile/Toon Standard | × FORCE のみ（影・MatCap・リム・輪郭等は失われる） |
 | 透明系 | — | 変換不可（モバイル用アバターシェーダーに透明なし） |
 
 ## NDMF（ビルド時適用）
@@ -86,4 +95,4 @@ lilToon の条件（いずれかに該当すると AUTO でアトラス化しな
 |---|---|
 | Mesh Compression | Unity のメッシュ圧縮（量子化）の仕様が公開されておらず、要件の「形状誤差を検証して不採用判定」ができない |
 | PC 版でのシェーダー自動置換 | 等価変換の検証済み組み合わせは Mobile Conversion でのみ提供する |
-| Poiyomi Adapter | シェーダーソースを確認していないため（入手・確認後に追加） |
+| Poiyomi Pro / Grab Pass / Lil Fur 版 | 有料配布または別処理を含み、ソースを確認していないため |

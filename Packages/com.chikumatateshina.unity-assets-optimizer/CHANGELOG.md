@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.0] - 2026-11-07
+
+### Added
+- Poiyomi Toon 10.0.29（無料版）の Shader Adapter。全テクスチャのサンプル方法をソースから抽出して分類し、UV 選択・パン・Stochastic・全体 UV 設定・視差等の前提条件を検証
+- Poiyomi（Opaque）→ VRChat/Mobile/Toon Standard の変換規則（非等価のため FORCE のみ）
+- ロック済みシェーダー（Hidden/Locked/...）に対する専用のスキップ理由
+
+### Changed
+- テクスチャチャンネルごとの前提条件（そのテクスチャが設定されている場合のみ評価）に対応
+
 ## [0.2.0] - 2026-11-07
 
 ### Added
@@ -21,7 +31,7 @@
 - 構造検証は、各処理が登録した構造変更（結合で外した Renderer、LOD の追加など）だけを許容する
 
 ### Not implemented
-- Mesh Compression（誤差を検証できないため）、Poiyomi Adapter（未検証）
+- Mesh Compression（誤差を検証できないため）
 
 ## [0.1.0] - 2026-11-07
 

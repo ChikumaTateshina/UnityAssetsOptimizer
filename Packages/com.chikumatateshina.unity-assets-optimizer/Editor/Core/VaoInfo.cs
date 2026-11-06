@@ -6,7 +6,7 @@ namespace ChikumaTateshina.AssetsOptimizer
     public static class VaoInfo
     {
         public const string PackageName = "com.chikumatateshina.unity-assets-optimizer";
-        public const string ToolVersion = "0.2.0";
+        public const string ToolVersion = "0.3.0";
         public const int ManifestSchemaVersion = 1;
         public const string MenuRoot = "Tools/VRChat Asset Optimizer/";
 

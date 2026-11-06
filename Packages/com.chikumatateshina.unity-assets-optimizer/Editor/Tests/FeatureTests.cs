@@ -348,6 +348,60 @@ namespace ChikumaTateshina.AssetsOptimizer.Tests
             Assert.IsNotNull(ShaderAdapterRegistry.CheckPreconditions(ShaderAdapterRegistry.Find(mat.shader), mat));
         }
 
+        const string PoiyomiShader = ".poiyomi/Poiyomi Toon";
+
+        [Test]
+        public void PoiyomiMaterialsAreAtlased()
+        {
+            if (Shader.Find(PoiyomiShader) == null) Assert.Ignore("Poiyomi Toon が導入されていません");
+            var matA = _a.Material("PA", PoiyomiShader, _a.Texture("TA", Color.red));
+            var matB = _a.Material("PB", PoiyomiShader, _a.Texture("TB", Color.blue));
+            var root = _a.Root("Poi");
+            _a.Quad("A", root, matA, Vector3.zero);
+            _a.Quad("B", root, matB, Vector3.right);
+            var settings = TestAssets.Only(ContentPreset.Avatar, FeatureIds.Atlas);
+            var dry = OptimizerPipeline.DryRun(OptimizerPipeline.Analyze(new[] { root }, settings));
+            var atlas = dry.Plans.First(p => p.Decision.operationId == FeatureIds.Atlas);
+            Assert.IsTrue(atlas.WillExecute, string.Join(" / ", atlas.Items.Select(i => i.target + ": " + i.reason)) + " " + dry.Error);
+            var result = _a.Run(new[] { root }, settings);
+            Assert.IsTrue(result.Success, result.Error);
+            var generated = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
+            var mats = generated.GetComponentsInChildren<Renderer>().SelectMany(r => r.sharedMaterials).Distinct().ToList();
+            Assert.AreEqual(1, mats.Count);
+            Assert.AreEqual(PoiyomiShader, mats[0].shader.name);
+        }
+
+        [Test]
+        public void PoiyomiUvSettingsAreRejected()
+        {
+            if (Shader.Find(PoiyomiShader) == null) Assert.Ignore("Poiyomi Toon が導入されていません");
+            var adapter = ShaderAdapterRegistry.Find(Shader.Find(PoiyomiShader));
+            Assert.IsNotNull(adapter);
+            var mat = _a.Material("PA", PoiyomiShader, _a.Texture("TA", Color.red));
+            Assert.IsNull(ShaderAdapterRegistry.CheckPreconditions(adapter, mat), "default material is accepted");
+
+            mat.SetVector("_UVSettingsPan0", new Vector4(0.1f, 0, 0, 0));
+            Assert.IsNotNull(ShaderAdapterRegistry.CheckPreconditions(adapter, mat), "global UV0 pan");
+            mat.SetVector("_UVSettingsPan0", Vector4.zero);
+
+            var main = adapter.Channels.First(c => c.Property == "_MainTex");
+            mat.SetFloat("_MainTexUV", 1);
+            Assert.IsTrue(main.Rules.Any(r => r.Check(mat) != null), "_MainTex on UV1");
+        }
+
+        [Test]
+        public void PoiyomiAndroidConversionNeedsForce()
+        {
+            if (Shader.Find(PoiyomiShader) == null) Assert.Ignore("Poiyomi Toon が導入されていません");
+            var tex = _a.Texture("T", Color.white);
+            var root = Avatar(_a.Material("PA", PoiyomiShader, tex), _a.Material("PB", PoiyomiShader, tex));
+            if (!CapabilityDatabase.IsConversionEnabled(VrcPlatform.Android, ContentPreset.Avatar, out var reason)) Assert.Ignore(reason);
+            var dry = OptimizerPipeline.DryRun(OptimizerPipeline.Analyze(new[] { root }, TestAssets.Only(ContentPreset.Avatar), RunKind.Android));
+            var plan = dry.Plans.First(p => p.Decision.operationId == MobileShaderConversionOperation.OperationId);
+            Assert.IsFalse(plan.WillExecute);
+            Assert.IsTrue(plan.Items.All(i => i.support == SupportState.Unknown && i.forceable), "non-equivalent → FORCE only");
+        }
+
         [Test]
         public void NdmfBuildAppliesOptimizationToBuildCloneOnly()
         {

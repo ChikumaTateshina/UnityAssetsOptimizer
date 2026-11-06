@@ -166,6 +166,8 @@ namespace ChikumaTateshina.AssetsOptimizer
         MaterialCandidate EvaluateMaterial(Material mat, OptimizationContext context, bool contentDedupe)
         {
             var cand = new MaterialCandidate { Material = mat, Adapter = ShaderAdapterRegistry.Find(mat.shader) };
+            if (cand.Adapter == null && mat.shader != null && mat.shader.name.StartsWith("Hidden/Locked/", StringComparison.Ordinal))
+                return Reject(cand, SupportState.Unsupported, "ロック済みシェーダー（" + mat.shader.name + "）。ロックを解除してから実行してください（生成後に再ロックできます）");
             if (cand.Adapter == null)
                 return Reject(cand, SupportState.Unsupported, "未対応シェーダー: " + (mat.shader != null ? mat.shader.name : "(none)"));
 
@@ -190,6 +192,11 @@ namespace ChikumaTateshina.AssetsOptimizer
                 if (tex == null) continue;
                 if (mat.GetTextureScale(channel.Property) != Vector2.one || mat.GetTextureOffset(channel.Property) != Vector2.zero)
                     return Reject(cand, SupportState.Unsupported, channel.Property + " の Tiling/Offset が単位値ではありません");
+                foreach (var rule in channel.Rules)
+                {
+                    var violated = rule.Check(mat);
+                    if (violated != null) return Reject(cand, SupportState.Unsupported, violated);
+                }
                 if (!TextureReader.TryInspect(tex, channel.Kind, out var src, out var reason))
                     return Reject(cand, SupportState.Unsupported, channel.Property + ": " + reason);
                 cand.Channels.Add(channel);

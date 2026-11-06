@@ -111,7 +111,34 @@ namespace ChikumaTateshina.AssetsOptimizer
             },
         };
 
-        public static ShaderConversionRule Find(Material m) => m == null || m.shader == null ? null : All.FirstOrDefault(r => r.Matches(m));
+        static readonly HashSet<string> PoiyomiNames = new HashSet<string>
+        {
+            ".poiyomi/Poiyomi Toon", ".poiyomi/Poiyomi Toon Two Pass", ".poiyomi/Poiyomi Toon Outline Early", ".poiyomi/Poiyomi Toon World",
+        };
+
+        public static readonly ShaderConversionRule PoiyomiRule = new ShaderConversionRule
+        {
+            Name = "Poiyomi Toon（Opaque） → VRChat/Mobile/Toon Standard",
+            Matches = m => PoiyomiNames.Contains(m.shader.name) && m.HasProperty("_Mode") && Mathf.Approximately(m.GetFloat("_Mode"), 0),
+            TargetShader = "VRChat/Mobile/Toon Standard",
+            IsEquivalent = m => false,
+            NonEquivalentReason = "Poiyomi の影・MatCap・リム・輪郭等は再現されない（主要テクスチャと色のみ移行）",
+            Copy = (s, d) =>
+            {
+                CopyTex(s, d, "_MainTex"); CopyColor(s, d, "_Color");
+                CopyTex(s, d, "_BumpMap"); CopyFloat(s, d, "_BumpScale");
+                if (s.HasProperty("_BumpMap") && s.GetTexture("_BumpMap") != null) d.EnableKeyword("USE_NORMAL_MAPS");
+                if (s.HasProperty("_EnableEmission") && s.GetFloat("_EnableEmission") > 0)
+                {
+                    CopyTex(s, d, "_EmissionMap");
+                    CopyColor(s, d, "_EmissionColor");
+                }
+                CopyFloat(s, d, "_Cull", "_Culling");
+            },
+        };
+
+        public static ShaderConversionRule Find(Material m) =>
+            m == null || m.shader == null ? null : All.Concat(new[] { PoiyomiRule }).FirstOrDefault(r => r.Matches(m));
     }
 
     /// <summary>VRChat SDK のアバター検証 API（VRC.SDK3.Validation.AvatarValidation）をリフレクションで呼ぶ。</summary>
