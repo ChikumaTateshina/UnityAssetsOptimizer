@@ -1,21 +1,53 @@
+# ------------------------------------------------------------
+# 公開するのは次のみ:
+#   Packages/com.chikumatateshina.unity-assets-optimizer/ (パッケージ本体)
+#   .github/ (リリース・VPM リスティング生成)
+#   README.md / LICENSE / .gitignore / .gitattributes
+# ------------------------------------------------------------
+
+# 内部設計資料（ローカルのみで管理）
+/docs/
+
+# エージェント / ツールのローカル設定
+/.claude/
+/.codex/
+CLAUDE.md
+AGENTS.md
+
 # OS / IDE
 .DS_Store
 Thumbs.db
+desktop.ini
 .vs/
 .vscode/
 .idea/
 *.csproj
 *.sln
 *.user
+*.suo
 
-# Unity (リポジトリ直下を Unity プロジェクトとして開いた場合)
+# Unity（リポジトリ直下やテスト用に Unity プロジェクトとして開いた場合）
+/[Aa]ssets/
 /[Ll]ibrary/
 /[Tt]emp/
 /[Oo]bj/
 /[Bb]uild/
+/[Bb]uilds/
 /[Ll]ogs/
 /[Uu]ser[Ss]ettings/
+/[Pp]roject[Ss]ettings/
+/[Pp]ackages/manifest.json
+/[Pp]ackages/packages-lock.json
+*.pidb.meta
+*.pdb.meta
+*.mdb.meta
+crashlytics-build.properties
 
-# Build output
+# Python
+__pycache__/
+*.pyc
+
+# ビルド成果物（リリース zip / Pages 出力）
 _site/
 *.zip
+*.unitypackage

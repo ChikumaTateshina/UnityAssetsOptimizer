@@ -16,6 +16,8 @@
   ],
   "documentationUrl": "https://github.com/ChikumaTateshina/UnityAssetsOptimizer",
   "changelogUrl": "https://github.com/ChikumaTateshina/UnityAssetsOptimizer/blob/main/Packages/com.chikumatateshina.unity-assets-optimizer/CHANGELOG.md",
+  "license": "MIT",
+  "licensesUrl": "https://github.com/ChikumaTateshina/UnityAssetsOptimizer/blob/main/LICENSE",
   "vpmDependencies": {},
   "legacyFolders": {},
   "legacyPackages": []

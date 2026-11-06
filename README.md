@@ -4,7 +4,6 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 選択した GameObject と子階層に対してテクスチャアトラス化・Material 統合・テクスチャ圧縮を行い、
 **原本を一切変更せず** 新しい Prefab を `Assets/VAOGenerated/` に生成します。
 
-- 設計文書: [要件定義書](docs/requirements.md) / [実装仕様書](docs/implementation_spec.md)
 - 検証状況: [CompatibilityMatrix.md](Packages/com.chikumatateshina.unity-assets-optimizer/Documentation~/CompatibilityMatrix.md)
 
 ## インストール（VCC / VPM）
@@ -60,7 +59,7 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 ## 開発
 
 - パッケージ本体: `Packages/com.chikumatateshina.unity-assets-optimizer/`
-- テスト: Unity の Test Runner（EditMode）。プロジェクトの `Packages/manifest.json` の `testables` にパッケージ名を追加してください
+- テスト: Unity の Test Runner（EditMode）。プロジェクトの `Packages/manifest.json` の `testables` にパッケージ名を追加してください（配布 zip にはテストを含めません）
 
 ### リリース手順
 
@@ -69,3 +68,7 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 3. GitHub Actions（`.github/workflows/release.yml`）が zip を Release に添付し、VPM リスティングを GitHub Pages に公開します
 
 初回のみ、GitHub リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定してください。
+
+## ライセンス
+
+[MIT License](LICENSE)

@@ -41,7 +41,8 @@ jobs:
       - name: Build package zip
         run: |
           cd "Packages/${PACKAGE_NAME}"
-          zip -r -X "${GITHUB_WORKSPACE}/${PACKAGE_NAME}-${{ steps.version.outputs.version }}.zip" . -x ".*"
+          # テストコードは配布に含めない
+          zip -r -X "${GITHUB_WORKSPACE}/${PACKAGE_NAME}-${{ steps.version.outputs.version }}.zip" . -x ".*" -x "Editor/Tests/*" -x "Editor/Tests.meta"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
