@@ -11,6 +11,7 @@ import io
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -112,11 +113,23 @@ def render_html(listing, pages_url, repo):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", default="_site")
+    parser.add_argument("--expect-tag", default="", help="このタグのバージョンが一覧に含まれるまで待つ")
     args = parser.parse_args()
     repo = os.environ["GITHUB_REPOSITORY"]
     token = os.environ.get("GITHUB_TOKEN")
 
     listing, pages_url = build(repo, token)
+    # リリース直後は API への反映が遅れることがあるため、期待するバージョンが現れるまで再取得する
+    expect = (args.expect_tag or "").lstrip("v")
+    for attempt in range(10):
+        versions = listing["packages"].get(PACKAGE_NAME, {}).get("versions", {})
+        if not expect or expect in versions:
+            break
+        print(f"waiting for {PACKAGE_NAME}@{expect} to appear in releases (attempt {attempt + 1})")
+        time.sleep(15)
+        listing, pages_url = build(repo, token)
+    else:
+        sys.exit(f"release for {expect} was not found")
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "index.json"), "w", encoding="utf-8") as f:
         json.dump(listing, f, ensure_ascii=False, indent=2)

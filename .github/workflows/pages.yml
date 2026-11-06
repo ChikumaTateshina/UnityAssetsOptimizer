@@ -38,7 +38,8 @@ jobs:
       - name: Build VPM listing
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/build_listing.py --out _site
+          EXPECT_TAG: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || '' }}
+        run: python3 .github/scripts/build_listing.py --out _site --expect-tag "$EXPECT_TAG"
 
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
