@@ -79,7 +79,7 @@ Avatar Optimizer（AAO）と併用する場合は、AAO より前に実行され
 
 1. `package.json` の `version` を更新し、`CHANGELOG.md` を追記
 2. `git tag v<version>` を push
-3. GitHub Actions（`.github/workflows/release.yml`）が zip を Release に添付し、VPM リスティングを GitHub Pages に公開します
+3. GitHub Actions の `release.yml` が zip を Release に添付し、完了後に `pages.yml` が VPM リスティングと紹介ページを GitHub Pages に公開します（`pages.yml` は Actions から手動実行もできます）
 
 初回のみ、GitHub リポジトリの **Settings → Pages → Build and deployment → Source** を **GitHub Actions** に設定してください。
 

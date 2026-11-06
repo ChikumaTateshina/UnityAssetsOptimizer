@@ -1,29 +1,20 @@
-name: Release & VPM Listing
+name: Release
 
-# v*.*.* タグの push でパッケージ zip を GitHub Release に公開し、
-# 全リリースから VPM リスティング (index.json) を生成して GitHub Pages へデプロイする。
-# 手動実行 (workflow_dispatch) ではリスティングの再生成のみを行う。
+# v*.*.* タグの push でパッケージ zip を GitHub Release に公開する。
+# VPM リスティング（GitHub Pages）は pages.yml がリリース完了後に更新する。
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
-
-concurrency:
-  group: release
-  cancel-in-progress: false
 
 env:
   PACKAGE_NAME: com.chikumatateshina.unity-assets-optimizer
 
 jobs:
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -51,25 +42,3 @@ jobs:
           files: |
             ${{ env.PACKAGE_NAME }}-${{ steps.version.outputs.version }}.zip
             Packages/${{ env.PACKAGE_NAME }}/package.json
-
-  listing:
-    needs: release
-    if: ${{ !cancelled() && needs.release.result != 'failure' }}
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build VPM listing
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/build_listing.py --out _site
-
-      - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-      - id: deployment
-        uses: actions/deploy-pages@v4
