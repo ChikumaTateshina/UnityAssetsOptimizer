@@ -329,6 +329,20 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         EditorGUILayout.LabelField(def.Note, EditorStyles.miniLabel);
                     }
                 }
+                if (def.Id == FeatureIds.MeshCombine && applicable && _settings.GetMode(def.Id) != ExecutionMode.Off)
+                {
+                    EditorGUI.indentLevel++;
+                    bool skinned = EditorGUILayout.ToggleLeft(new GUIContent("SkinnedMesh も結合する",
+                        "アバターの服・髪などは SkinnedMesh のため、これを ON にしないとほとんど結合されません（要件上の初期値は OFF）"), _settings.meshCombineSkinned);
+                    if (skinned != _settings.meshCombineSkinned)
+                    {
+                        _settings.meshCombineSkinned = skinned;
+                        SettingsChanged();
+                    }
+                    if (!skinned && _settings.preset == ContentPreset.Avatar)
+                        EditorGUILayout.LabelField("アバターでは SkinnedMesh が対象外のため、ほとんど結合されません。", EditorStyles.wordWrappedMiniLabel);
+                    EditorGUI.indentLevel--;
+                }
             }
 
             if (_settings.preset == ContentPreset.Avatar) DrawExternalTools();
@@ -347,7 +361,6 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 "JpegWhenOpaque: 不透明なカラー/マスクは JPEG、アルファあり・ノーマルマップは PNG。Png: 常に PNG（可逆）。ゲーム中の画質と VRAM はテクスチャ圧縮（DXT/ASTC）で決まります"), _settings.atlasImageFormat);
             using (new EditorGUI.DisabledScope(_settings.atlasImageFormat != AtlasImageFormat.JpegWhenOpaque))
                 _settings.jpegQuality = EditorGUILayout.IntSlider(new GUIContent("JPEG 品質", "95 なら見た目で劣化が分からない程度（PSNR 40dB 以上をテストで確認）"), _settings.jpegQuality, 50, 100);
-            _settings.meshCombineSkinned = EditorGUILayout.Toggle(new GUIContent("メッシュ結合: SkinnedMesh も対象", "要件上の初期値は OFF"), _settings.meshCombineSkinned);
             _settings.meshCombineCellSize = EditorGUILayout.FloatField(new GUIContent("メッシュ結合: 空間セル(m)", "セルを跨いで結合しない（カリング単位の保護）"), _settings.meshCombineCellSize);
             _settings.polygonReductionRatio = EditorGUILayout.Slider("ポリゴン削減: 目標比率", _settings.polygonReductionRatio, 0.05f, 0.95f);
             _settings.decimationMaxError = EditorGUILayout.Slider(new GUIContent("簡略化: 許容誤差", "境界ボックス対角長に対する比率。超える縮約は行わない"), _settings.decimationMaxError, 0.001f, 0.05f);

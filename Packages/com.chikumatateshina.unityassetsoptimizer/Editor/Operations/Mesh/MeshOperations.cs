@@ -12,6 +12,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// <summary>
     /// メッシュ結合。同じ描画設定・頂点形式・静的状態・空間セル内の Renderer を1つにまとめる。
     /// アニメーション・スクリプト参照・Udon・他コンポーネントを持つものは対象外（参照が切れるため FORCE 不可）。
+    /// 静的メッシュの Collider は Renderer と独立しているため、そのまま残して結合する。
     /// </summary>
     public sealed class MeshCombineOperation : OptimizationOperationBase
     {
@@ -35,6 +36,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             public RendererInfo Info;
             public PlanItem Item;
             public string Key;
+            public List<KeyValuePair<string, string>> KeyParts;
         }
 
         public override OperationAnalysis Analyze(OptimizationContext context)
@@ -53,11 +55,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 }
                 var item = PlanItem.Supported(label);
                 analysis.Items.Add(item);
-                candidates.Add(new Candidate { Info = info, Item = item, Key = GroupKey(info, context) });
+                var parts = GroupKeyParts(info, context);
+                candidates.Add(new Candidate { Info = info, Item = item, KeyParts = parts, Key = string.Join("|", parts.Select(p => p.Value)) });
             }
             analysis.Data = candidates;
             analysis.Notes.Add("結合後の Prefab はライトマップ情報を持ちません（再ベイクが必要）。");
-            analysis.Notes.Add("結合された側の GameObject は残り、Renderer/MeshFilter のみ削除されます。");
+            analysis.Notes.Add("結合された側の GameObject は残り、Renderer/MeshFilter のみ削除されます（Collider はそのまま残ります）。");
             return analysis;
         }
 
@@ -67,7 +70,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var go = r.gameObject;
             bool skinned = r is SkinnedMeshRenderer;
             if (!(r is MeshRenderer) && !skinned) return "対象外の Renderer 種別";
-            if (skinned && !context.Settings.meshCombineSkinned) return "SkinnedMeshRenderer の結合は設定で無効（詳細パラメータ）";
+            if (skinned && !context.Settings.meshCombineSkinned) return "SkinnedMesh の結合が無効（「メッシュ結合」の下の「SkinnedMesh も結合する」で有効にできます）";
             if (!r.enabled || !go.activeSelf) return "無効/非アクティブ";
             for (var t = r.transform.parent; t != null && t != context.Graph.Roots[info.RootIndex].transform; t = t.parent)
             {
@@ -84,7 +87,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 return "他のコンポーネントから参照されている";
             if (info.UdonOnSameObject) return "同一オブジェクトに UdonBehaviour";
             var allowed = skinned ? new[] { typeof(Transform), typeof(SkinnedMeshRenderer) } : new[] { typeof(Transform), typeof(MeshFilter), typeof(MeshRenderer) };
-            if (go.GetComponents<Component>().Any(c => c == null || !allowed.Contains(c.GetType()))) return "Renderer 以外のコンポーネントを持つ GameObject";
+            // 静的メッシュの Collider（MeshCollider は自身の sharedMesh を持つ）は Renderer を消しても動作が変わらない
+            bool AllowedComponent(Component c) => c != null && (allowed.Contains(c.GetType()) || (!skinned && c is Collider));
+            var other = go.GetComponents<Component>().FirstOrDefault(c => !AllowedComponent(c));
+            if (other != null || go.GetComponents<Component>().Any(c => c == null))
+                return "Renderer 以外のコンポーネントを持つ GameObject（" + (other == null ? "Missing Script" : other.GetType().Name) + "）";
             if (skinned)
             {
                 var smr = (SkinnedMeshRenderer)r;
@@ -95,40 +102,59 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return null;
         }
 
-        static string GroupKey(RendererInfo info, OptimizationContext context)
+        /// <summary>結合条件（表示名と値）。すべて一致するものだけを同じグループにする。</summary>
+        static List<KeyValuePair<string, string>> GroupKeyParts(RendererInfo info, OptimizationContext context)
         {
             var r = info.Renderer;
-            var parts = new List<string>
-            {
-                info.RootIndex.ToString(),
-                r is SkinnedMeshRenderer ? "skinned" : "static",
-                MeshMerger.AttributeSignature(info.Mesh),
-                r.gameObject.layer.ToString(),
-                ((int)GameObjectUtility.GetStaticEditorFlags(r.gameObject)).ToString(),
-                r.shadowCastingMode.ToString(), r.receiveShadows.ToString(), r.lightProbeUsage.ToString(), r.reflectionProbeUsage.ToString(),
-                r.probeAnchor != null ? r.probeAnchor.GetInstanceID().ToString() : "-",
-                r.motionVectorGenerationMode.ToString(), r.sortingLayerID.ToString(), r.sortingOrder.ToString(),
-                r.renderingLayerMask.ToString(), r.allowOcclusionWhenDynamic.ToString(),
-            };
+            var parts = new List<KeyValuePair<string, string>>();
+            void Add(string label, object value) => parts.Add(new KeyValuePair<string, string>(label, value?.ToString() ?? "-"));
+            Add("ルート", info.RootIndex);
+            Add("種別", r is SkinnedMeshRenderer ? "SkinnedMesh" : "Mesh");
+            Add("頂点形式", MeshMerger.AttributeSignature(info.Mesh));
+            Add("レイヤー", LayerMask.LayerToName(r.gameObject.layer) is var layer && layer.Length > 0 ? layer : r.gameObject.layer.ToString());
+            Add("Static 設定", GameObjectUtility.GetStaticEditorFlags(r.gameObject));
+            Add("Cast Shadows", r.shadowCastingMode);
+            Add("Receive Shadows", r.receiveShadows);
+            Add("Light Probes", r.lightProbeUsage);
+            Add("Reflection Probes", r.reflectionProbeUsage);
+            Add("Anchor Override", r.probeAnchor != null ? r.probeAnchor.name + "#" + r.probeAnchor.GetInstanceID() : "-");
+            Add("Motion Vectors", r.motionVectorGenerationMode);
+            Add("Sorting Layer", r.sortingLayerID);
+            Add("Order in Layer", r.sortingOrder);
+            Add("Rendering Layer Mask", r.renderingLayerMask);
+            Add("Dynamic Occlusion", r.allowOcclusionWhenDynamic);
             if (r is SkinnedMeshRenderer smr)
             {
-                parts.Add(smr.quality.ToString());
-                parts.Add(smr.updateWhenOffscreen.ToString());
-                parts.Add(smr.skinnedMotionVectors.ToString());
+                Add("Quality", smr.quality);
+                Add("Update When Offscreen", smr.updateWhenOffscreen);
+                Add("Skinned Motion Vectors", smr.skinnedMotionVectors);
             }
             else
             {
                 var c = r.bounds.center / Math.Max(0.01f, context.Settings.meshCombineCellSize);
-                parts.Add(Mathf.FloorToInt(c.x) + "," + Mathf.FloorToInt(c.y) + "," + Mathf.FloorToInt(c.z));
+                Add("空間セル（" + context.Settings.meshCombineCellSize + "m）", Mathf.FloorToInt(c.x) + "," + Mathf.FloorToInt(c.y) + "," + Mathf.FloorToInt(c.z));
             }
-            return string.Join("|", parts);
+            return parts;
+        }
+
+        /// <summary>相手が見つからない Renderer について、最も条件の近い候補との違いを説明する。</summary>
+        static string NoPartnerReason(Candidate c, List<Candidate> all, bool blendShapeConflict)
+        {
+            if (blendShapeConflict) return "同じ条件の Renderer と BlendShape 名が重複するため結合できません";
+            var others = all.Where(o => o != c && o.Info.RootIndex == c.Info.RootIndex).ToList();
+            if (others.Count == 0) return "結合できる他の Renderer がありません（他はすべて対象外）";
+            var nearest = others
+                .Select(o => new { Other = o, Diff = c.KeyParts.Where((p, i) => p.Value != o.KeyParts[i].Value).Select(p => p.Key).ToList() })
+                .OrderBy(x => x.Diff.Count).First();
+            return "結合条件が一致する相手がありません（最も近い " + nearest.Other.Info.Renderer.name + " とは " + string.Join("・", nearest.Diff) + " が異なる）";
         }
 
         public override OperationPlan Plan(OperationAnalysis analysis, OptimizationContext context, ExecutionMode mode)
         {
             var plan = CreatePlan(analysis, mode);
             var groups = new List<CombineGroup>();
-            foreach (var g in ((List<Candidate>)analysis.Data).Where(c => c.Item.included).GroupBy(c => c.Key).OrderBy(g => g.Key, StringComparer.Ordinal))
+            var included = ((List<Candidate>)analysis.Data).Where(c => c.Item.included).ToList();
+            foreach (var g in included.GroupBy(c => c.Key).OrderBy(g => g.Key, StringComparer.Ordinal))
             {
                 var ordered = g.OrderBy(c => c.Info.Key, StringComparer.Ordinal).ToList();
                 var partitions = new List<List<Candidate>>();
@@ -145,7 +171,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     if (p.Count < 2)
                     {
                         p[0].Item.included = false;
-                        p[0].Item.reason = "結合条件が一致する相手がありません";
+                        p[0].Item.reason = NoPartnerReason(p[0], included, partitions.Count > 1);
                         continue;
                     }
                     var group = new CombineGroup { Skinned = p[0].Info.Renderer is SkinnedMeshRenderer };
