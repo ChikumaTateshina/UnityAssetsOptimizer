@@ -79,12 +79,19 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         IReadOnlyList<PropertyRule> Rules { get; }
         /// <summary>このマテリアルが使用する頂点属性。不明な場合は null（属性削除を行わない）。</summary>
         HashSet<VertexAttribute> UsedAttributes(Material material);
+        /// <summary>メインテクスチャに乗算されるメインカラー（アトラスへ焼き込める場合）。なければ null。</summary>
+        string MainColorProperty { get; }
+        /// <summary>メインカラーが乗算されるテクスチャ。</summary>
+        string MainColorTexture { get; }
+        /// <summary>メインカラーを焼き込めない理由（シェーダー固有の条件）。焼き込めるなら null。</summary>
+        string ColorBakeBlocker(Material material);
     }
 
     public sealed class DataShaderAdapter : IShaderAdapter
     {
         readonly Func<Shader, bool> _matches;
         readonly Func<Material, HashSet<VertexAttribute>> _attributes;
+        readonly Func<Material, string> _colorBakeBlocker;
 
         public string Id { get; }
         public int Version { get; }
@@ -93,10 +100,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public IReadOnlyList<string> SharedTextures { get; }
         public IReadOnlyList<string> ForbiddenTextures { get; }
         public IReadOnlyList<PropertyRule> Rules { get; }
+        public string MainColorProperty { get; }
+        public string MainColorTexture { get; }
 
         public DataShaderAdapter(string id, int version, string verifiedAgainst, Func<Shader, bool> matches, AtlasChannel[] channels,
-            string[] shared = null, string[] forbidden = null, PropertyRule[] rules = null, Func<Material, HashSet<VertexAttribute>> attributes = null)
+            string[] shared = null, string[] forbidden = null, PropertyRule[] rules = null, Func<Material, HashSet<VertexAttribute>> attributes = null,
+            string mainColor = null, string mainColorTexture = "_MainTex", Func<Material, string> colorBakeBlocker = null)
         {
+            MainColorProperty = mainColor;
+            MainColorTexture = mainColorTexture;
+            _colorBakeBlocker = colorBakeBlocker;
             Id = id;
             Version = version;
             VerifiedAgainst = verifiedAgainst;
@@ -110,6 +123,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public bool Matches(Shader shader) => shader != null && _matches(shader);
         public HashSet<VertexAttribute> UsedAttributes(Material material) => _attributes?.Invoke(material);
+        public string ColorBakeBlocker(Material material) => _colorBakeBlocker?.Invoke(material);
     }
 
     /// <summary>
@@ -145,7 +159,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 new AtlasChannel("_DetailMask", AtlasChannelKind.Data),
             }, forbidden: new[] { "_DetailAlbedoMap", "_DetailNormalMap" },
                 attributes: m => Attrs(VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent,
-                    VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2)),
+                    VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2),
+                mainColor: "_Color"),
             new DataShaderAdapter("unity.standard-specular", 2, "Unity 2022.3 Built-in Standard (Specular setup)", s => s.name == "Standard (Specular setup)", new[]
             {
                 new AtlasChannel("_MainTex", AtlasChannelKind.Color),
@@ -157,11 +172,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 new AtlasChannel("_DetailMask", AtlasChannelKind.Data),
             }, forbidden: new[] { "_DetailAlbedoMap", "_DetailNormalMap" },
                 attributes: m => Attrs(VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent,
-                    VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2)),
+                    VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2),
+                mainColor: "_Color"),
             MainTexOnly("unity.unlit-texture", "Unlit/Texture", false),
             MainTexOnly("unity.unlit-transparent", "Unlit/Transparent", false),
             MainTexOnly("unity.unlit-transparent-cutout", "Unlit/Transparent Cutout", false),
-            MainTexOnly("unity.legacy-diffuse", "Legacy Shaders/Diffuse", true),
+            MainTexOnly("unity.legacy-diffuse", "Legacy Shaders/Diffuse", true, "_Color"),
             MainTexOnly("unity.mobile-diffuse", "Mobile/Diffuse", true),
             LilToon(),
             Poiyomi(),
@@ -171,12 +187,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public static IShaderAdapter Find(Shader shader) => Adapters.FirstOrDefault(a => a.Matches(shader));
 
-        static IShaderAdapter MainTexOnly(string id, string shaderName, bool lit) =>
+        static IShaderAdapter MainTexOnly(string id, string shaderName, bool lit, string mainColor = null) =>
             new DataShaderAdapter(id, 2, "Unity 2022.3 Built-in " + shaderName, s => s.name == shaderName,
                 new[] { new AtlasChannel("_MainTex", AtlasChannelKind.Color) },
                 attributes: m => lit
                     ? Attrs(VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.TexCoord0, VertexAttribute.TexCoord1)
-                    : Attrs(VertexAttribute.Position, VertexAttribute.TexCoord0));
+                    : Attrs(VertexAttribute.Position, VertexAttribute.TexCoord0),
+                mainColor: mainColor);
 
         /// <summary>
         /// lilToon 2.3.1 のシェーダーソース（Includes/lil_common_frag.hlsl ほか）で確認した内容:
@@ -249,6 +266,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 PropertyRule.Equals("_UseAudioLink", 0, "AudioLink が有効（UV 依存）"),
                 PropertyRule.Equals("_UDIMDiscardCompile", 0, "UDIM Discard が有効"),
                 PropertyRule.Equals("_UseParallax", 0, "視差マップが有効"),
+            },
+            // lilToon は色調補正・グラデーションマップを適用した後に _Color を乗算する（lil_common_frag.hlsl）。
+            // それらが初期値なら、_Color をメインテクスチャへ焼き込んでも結果は同じ
+            mainColor: "_Color",
+            colorBakeBlocker: m =>
+            {
+                if (m.HasProperty("_MainTexHSVG") && m.GetVector("_MainTexHSVG") != new Vector4(0, 1, 1, 1)) return "メインの色調補正（HSVG）が有効";
+                if (m.HasProperty("_MainGradationStrength") && !Mathf.Approximately(m.GetFloat("_MainGradationStrength"), 0)) return "グラデーションマップが有効";
+                return null;
             });
         }
 
@@ -371,6 +397,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 PropertyRule.Equals("_EnableUDIMDiscardOptions", 0, "UDIM Discard が有効"),
                 PropertyRule.Equals("_TextEnabled", 0, "Text（UV 上にグリフを描画）が有効"),
                 PropertyRule.Equals("_EnableDistortion", 0, "UV Distortion が有効"),
+            },
+            // Poiyomi はサンプル直後に baseColor = mainTex.rgb * Theme(_Color)、alpha = mainTex.a * _Color.a とする。
+            // テーマカラー・Ignore Alpha・Two Pass（2パス目は _TwoPassColor）のときは焼き込まない
+            mainColor: "_Color",
+            colorBakeBlocker: m =>
+            {
+                if (m.shader.name.Contains("Two Pass")) return "Two Pass 版（2パス目が別の色を使う）";
+                if (m.HasProperty("_ColorThemeIndex") && !Mathf.Approximately(m.GetFloat("_ColorThemeIndex"), 0)) return "メインカラーにテーマカラーを使用";
+                if (m.HasProperty("_MainIgnoreTexAlpha") && !Mathf.Approximately(m.GetFloat("_MainIgnoreTexAlpha"), 0)) return "Ignore Alpha が有効";
+                return null;
             });
         }
 

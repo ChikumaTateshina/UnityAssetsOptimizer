@@ -47,6 +47,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public readonly HashSet<Material> ScriptReferencedMaterials = new HashSet<Material>();
         /// <summary>依存 AnimationClip の全バインディングパス。</summary>
         public readonly HashSet<string> AnimatedBindingPaths = new HashSet<string>();
+        /// <summary>構造・表示に影響するバインディング（パス → 種類）。Animator パラメータや他コンポーネントのプロパティは含めない。</summary>
+        public readonly List<(string path, Type type, string property)> StructuralBindings = new List<(string, Type, string)>();
+
+        /// <summary>そのオブジェクト自身について、結合・バッチングを妨げるバインディングの種類か。</summary>
+        public static bool AffectsSelf(Type type) =>
+            type == typeof(GameObject) || typeof(Transform).IsAssignableFrom(type) || typeof(Renderer).IsAssignableFrom(type) || type == typeof(MeshFilter);
+
+        /// <summary>親について、子の結合・バッチングを妨げるバインディング（表示の切替・移動）か。</summary>
+        public static bool AffectsChildren(Type type, string property) =>
+            (type == typeof(GameObject) && property == "m_IsActive") || typeof(Transform).IsAssignableFrom(type);
         /// <summary>任意の MonoBehaviour から参照される GameObject/Component の Transform。</summary>
         public readonly HashSet<Transform> ReferencedTransforms = new HashSet<Transform>();
         /// <summary>
@@ -61,17 +71,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         /// </summary>
         public bool IsAnimated(Transform t, Transform root)
         {
-            if (AnimatedBindingPaths.Count == 0) return false;
+            if (StructuralBindings.Count == 0) return false;
             for (var cur = t; cur != null; cur = cur.parent)
             {
                 var namePath = AssetPathUtility.NamePath(cur, root);
-                foreach (var bp in AnimatedBindingPaths)
+                bool self = cur == t;
+                foreach (var (bp, type, property) in StructuralBindings)
                 {
-                    if (bp.Length == 0)
-                    {
-                        if (cur == root || cur.GetComponent<Animator>() != null || cur.GetComponent<Animation>() != null) return true;
-                    }
-                    else if (namePath == bp || namePath.EndsWith("/" + bp, StringComparison.Ordinal)) return true;
+                    if (self ? !AffectsSelf(type) : !AffectsChildren(type, property)) continue;
+                    bool match = bp.Length == 0
+                        ? cur == root || cur.GetComponent<Animator>() != null || cur.GetComponent<Animation>() != null
+                        : namePath == bp || namePath.EndsWith("/" + bp, StringComparison.Ordinal);
+                    if (match) return true;
                 }
                 if (cur == root) break;
             }
@@ -283,8 +294,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var bindingPaths = new HashSet<string>();
             foreach (var clip in report.UsedAnimationClips)
             {
-                foreach (var b in AnimationUtility.GetCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);
-                foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);
+                foreach (var b in AnimationUtility.GetCurveBindings(clip).Concat(AnimationUtility.GetObjectReferenceCurveBindings(clip)))
+                {
+                    report.AnimatedBindingPaths.Add(b.path);
+                    if (AnalysisReport.AffectsSelf(b.type) || AnalysisReport.AffectsChildren(b.type, b.propertyName))
+                        report.StructuralBindings.Add((b.path, b.type, b.propertyName));
+                }
                 foreach (var b in AnimationUtility.GetCurveBindings(clip))
                     if (typeof(Renderer).IsAssignableFrom(b.type) && b.propertyName.StartsWith("material.", StringComparison.Ordinal))
                         bindingPaths.Add(b.path);

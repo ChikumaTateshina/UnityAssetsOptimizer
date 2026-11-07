@@ -332,6 +332,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             _settings.standaloneCrunch = EditorGUILayout.Toggle("PC: Crunch 圧縮", _settings.standaloneCrunch);
             _settings.mobileAstcBlock = EditorGUILayout.IntPopup("Android/iOS: ASTC ブロック", _settings.mobileAstcBlock, AstcBlocks.Select(b => b + "x" + b).ToArray(), AstcBlocks);
             _settings.downscaleMaxSize = EditorGUILayout.IntPopup("自動解像度削減: 最大", _settings.downscaleMaxSize, AtlasSizes.Select(s => s.ToString()).ToArray(), AtlasSizes);
+            _settings.atlasImageFormat = (AtlasImageFormat)EditorGUILayout.EnumPopup(new GUIContent("アトラスのファイル形式",
+                "JpegWhenOpaque: 不透明なカラー/マスクは JPEG、アルファあり・ノーマルマップは PNG。Png: 常に PNG（可逆）。ゲーム中の画質と VRAM はテクスチャ圧縮（DXT/ASTC）で決まります"), _settings.atlasImageFormat);
+            using (new EditorGUI.DisabledScope(_settings.atlasImageFormat != AtlasImageFormat.JpegWhenOpaque))
+                _settings.jpegQuality = EditorGUILayout.IntSlider(new GUIContent("JPEG 品質", "95 なら見た目で劣化が分からない程度（PSNR 40dB 以上をテストで確認）"), _settings.jpegQuality, 50, 100);
             _settings.meshCombineSkinned = EditorGUILayout.Toggle(new GUIContent("メッシュ結合: SkinnedMesh も対象", "要件上の初期値は OFF"), _settings.meshCombineSkinned);
             _settings.meshCombineCellSize = EditorGUILayout.FloatField(new GUIContent("メッシュ結合: 空間セル(m)", "セルを跨いで結合しない（カリング単位の保護）"), _settings.meshCombineCellSize);
             _settings.polygonReductionRatio = EditorGUILayout.Slider("ポリゴン削減: 目標比率", _settings.polygonReductionRatio, 0.05f, 0.95f);

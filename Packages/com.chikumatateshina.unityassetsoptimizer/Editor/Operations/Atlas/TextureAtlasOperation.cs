@@ -39,6 +39,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             public readonly List<AtlasChannel> Channels = new List<AtlasChannel>();
             public readonly Dictionary<string, TextureSourceInfo> Sources = new Dictionary<string, TextureSourceInfo>();
             public Vector2Int Size;
+            /// <summary>メインカラーをアトラスへ焼き込む（アトラス Material のメインカラーは白にする）。</summary>
+            public bool ColorBaked;
+            /// <summary>テクスチャへ乗算する色（白なら null）。単色ソースの場合は色がソース自体に入っている。</summary>
+            public Color? BakeColor;
         }
 
         sealed class SubmeshEntry
@@ -59,6 +63,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             public List<Vector2Int> Sizes = new List<Vector2Int>();
             public AtlasPackResult Pack;
             public bool MixedProperties;
+            public string ColorProperty;
+            public string ColorTexture;
+            public Dictionary<Material, Color?> BakeColors = new Dictionary<Material, Color?>();
 
             // Execute 時に設定
             public Material AtlasMaterial;
@@ -186,6 +193,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var precondition = ShaderAdapterRegistry.CheckPreconditions(cand.Adapter, mat);
             if (precondition != null) return Reject(cand, SupportState.Unsupported, precondition);
 
+            // メインカラーの焼き込み可否（HDR の色やシェーダー固有の条件があれば焼き込まない）
+            var colorProp = cand.Adapter.MainColorProperty;
+            string bakeBlocker = null;
+            if (colorProp == null || !mat.HasProperty(colorProp) || !mat.HasProperty(cand.Adapter.MainColorTexture)) bakeBlocker = "メインカラーなし";
+            else
+            {
+                var c = mat.GetColor(colorProp);
+                if (c.r < 0 || c.g < 0 || c.b < 0 || c.a < 0 || c.r > 1 || c.g > 1 || c.b > 1 || c.a > 1) bakeBlocker = "HDR のメインカラー";
+                else bakeBlocker = cand.Adapter.ColorBakeBlocker(mat);
+            }
+            cand.ColorBaked = bakeBlocker == null;
+
             var importKeys = new List<string>();
             foreach (var channel in cand.Adapter.Channels)
             {
@@ -207,15 +226,38 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 importKeys.Add(channel.Property + "=" + src.ImportKey + ":" + src.Filter + ":" + src.AnisoLevel);
             }
             if (cand.Channels.Count == 0)
-                return Reject(cand, SupportState.Unsupported, "アトラス化するテクスチャがありません");
+            {
+                // テクスチャのない Material は、メインカラーを単色の領域として焼き込めればアトラス化できる
+                if (!cand.ColorBaked)
+                    return Reject(cand, SupportState.Unsupported, "アトラス化するテクスチャがありません（メインカラーも焼き込めません: " + bakeBlocker + "）");
+                var channel = cand.Adapter.Channels.First(ch => ch.Property == cand.Adapter.MainColorTexture);
+                var solid = TextureSourceInfo.SolidSource(mat.GetColor(colorProp));
+                cand.Channels.Add(channel);
+                cand.Sources[channel.Property] = solid;
+                cand.Size = new Vector2Int(solid.Width, solid.Height);
+                importKeys.Add(channel.Property + "=" + solid.ImportKey + ":" + solid.Filter + ":" + solid.AnisoLevel);
+            }
+            else if (cand.ColorBaked)
+            {
+                if (cand.Sources.ContainsKey(cand.Adapter.MainColorTexture))
+                {
+                    var c = mat.GetColor(colorProp);
+                    if (c != Color.white) cand.BakeColor = c;
+                }
+                else if (mat.GetColor(colorProp) != Color.white)
+                {
+                    cand.ColorBaked = false; // メインテクスチャがないのにテクスチャがある構成は、色を焼き込めない
+                }
+            }
 
             foreach (var shared in cand.Adapter.SharedTextures)
                 if (mat.HasProperty(shared))
                     importKeys.Add(shared + "=shared:" + TextureIdentity.Key(mat.GetTexture(shared), contentDedupe) + ":" +
                                    mat.GetTextureScale(shared) + mat.GetTextureOffset(shared));
-            var tail = cand.Adapter.Id + "#" + cand.Adapter.Version + "|" + string.Join(";", importKeys);
-            cand.StrictKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, true, false);
-            cand.LooseKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, false, false);
+            var tail = cand.Adapter.Id + "#" + cand.Adapter.Version + "|" + string.Join(";", importKeys) + (cand.ColorBaked ? "|colorbake" : string.Empty);
+            var exclude = cand.ColorBaked ? new[] { colorProp } : null;
+            cand.StrictKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, true, false, exclude);
+            cand.LooseKey = tail + "|" + MaterialEquivalence.Key(mat, contentDedupe, false, false, exclude);
 
             if (context.Analysis.ScriptReferencedMaterials.Contains(mat))
             {
@@ -243,6 +285,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             bool force = mode == ExecutionMode.Force && ManualOverride.IsEnabled;
 
             var included = entries.Where(e => e.Item.included).ToList();
+
+            // 各テクスチャを参照している Material（グループ外でも使われるテクスチャをアトラスへ複製するとメモリが増える）
+            var textureUsers = new Dictionary<Texture, HashSet<Material>>();
+            foreach (var m in context.Analysis.Renderers.SelectMany(r => r.Materials).Select(context.Canonical).Where(m => m != null && m.shader != null).Distinct())
+                for (int i = 0; i < m.shader.GetPropertyCount(); i++)
+                {
+                    if (m.shader.GetPropertyType(i) != ShaderPropertyType.Texture) continue;
+                    var t = m.GetTexture(m.shader.GetPropertyName(i));
+                    if (t == null) continue;
+                    if (!textureUsers.TryGetValue(t, out var users)) textureUsers[t] = users = new HashSet<Material>();
+                    users.Add(m);
+                }
             var byKey = included
                 .GroupBy(e => force ? e.Candidate.LooseKey : e.Candidate.StrictKey)
                 .OrderBy(g => g.Key, StringComparer.Ordinal);
@@ -263,14 +317,39 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
                 var first = g.First().Candidate;
                 var group = new AtlasGroup { Index = data.Groups.Count, Adapter = first.Adapter, Channels = first.Channels.ToList() };
+                if (first.ColorBaked)
+                {
+                    group.ColorProperty = first.Adapter.MainColorProperty;
+                    group.ColorTexture = first.Adapter.MainColorTexture;
+                }
                 foreach (var m in materials)
                 {
                     var cand = g.First(e => e.Candidate.Material == m).Candidate;
                     group.Materials.Add(m);
                     group.Sources[m] = cand.Sources;
                     group.Sizes.Add(cand.Size);
+                    group.BakeColors[m] = cand.BakeColor;
                 }
                 group.MixedProperties = g.Select(e => e.Candidate.StrictKey).Distinct().Count() > 1;
+
+                var sharedOutside = group.Sources.Values.SelectMany(d => d.Values).Where(s => !s.Solid && s.Texture != null)
+                    .Select(s => s.Texture).Distinct()
+                    .Where(t => textureUsers.TryGetValue(t, out var users) && users.Any(u => !group.Materials.Contains(u)))
+                    .Select(t => t.name).ToList();
+                if (sharedOutside.Count > 0)
+                {
+                    var why = "元テクスチャ（" + string.Join(", ", sharedOutside.Take(3)) + "）が統合対象外の Material でも使われるため、アトラスへ複製するとテクスチャメモリが増えます";
+                    if (!force)
+                    {
+                        foreach (var e in g)
+                        {
+                            e.Item.included = false;
+                            e.Item.reason = AppendReason(e.Item.reason, why);
+                        }
+                        continue;
+                    }
+                    plan.ForceRisks.Add("グループ" + data.Groups.Count + ": " + why);
+                }
                 try
                 {
                     group.Pack = AtlasPacker.Pack(group.Sizes, context.Settings.atlasPadding, context.Settings.atlasMaxSize);
@@ -350,6 +429,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var pack = group.Pack;
             var first = group.Materials[0];
             var atlasMaterial = new Material(first) { name = "Atlas_" + group.Index + "_" + first.name };
+            bool linearSpace = UnityEditor.PlayerSettings.colorSpace == ColorSpace.Linear;
 
             foreach (var channel in group.Channels)
             {
@@ -358,12 +438,27 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 for (int i = 0; i < group.Materials.Count; i++)
                 {
                     var src = group.Sources[group.Materials[i]][channel.Property];
-                    if (!cache.TryGetValue(src.Texture, out var px))
+                    (Color32[] px, int w, int h) px;
+                    if (src.Solid)
+                    {
+                        px = (new[] { src.SolidColor }, 1, 1);
+                    }
+                    else if (!cache.TryGetValue(src.Texture, out px))
                     {
                         var pixels = TextureReader.ReadPixels(src, out int w, out int h);
                         px = (pixels, w, h);
                         cache[src.Texture] = px;
                         yield return null;
+                    }
+                    // メインカラーをテクスチャへ乗算して焼き込む（キャッシュは変更しない）
+                    if (channel.Property == group.ColorTexture && group.BakeColors.TryGetValue(group.Materials[i], out var bake) && bake.HasValue)
+                    {
+                        Color32[] baked = null;
+                        var source = px.px;
+                        var color = bake.Value;
+                        bool srgb = src.SRgb;
+                        yield return Task.Run(() => baked = ColorBake.Multiply(source, color, srgb, linearSpace));
+                        px = (baked, px.w, px.h);
                     }
                     if (!hasAlpha) hasAlpha = px.px.Any(c => c.a < 255);
                     sources.Add(new AtlasComposer.Source { Pixels = px.px, Width = px.w, Height = px.h, Destination = pack.Rects[i] });
@@ -402,6 +497,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 atlasMaterial.SetTextureOffset(channel.Property, Vector2.zero);
             }
 
+            if (group.ColorProperty != null) atlasMaterial.SetColor(group.ColorProperty, Color.white);
             group.AtlasMaterial = gen.AddAsset(atlasMaterial, "Materials", atlasMaterial.name, Id, MaterialEquivalence.StableId(first));
             for (int i = 0; i < group.Materials.Count; i++)
             {
@@ -514,6 +610,40 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         result.Fail(key + ": 変換後 UV が範囲外です。");
             }
             return result;
+        }
+
+        /// <summary>メインカラーの乗算をテクスチャへ焼き込む。Unity API を使わない（別スレッド可）。</summary>
+        public static class ColorBake
+        {
+            static float SrgbToLinear(float c) => c <= 0.04045f ? c / 12.92f : (float)Math.Pow((c + 0.055f) / 1.055f, 2.4f);
+            static float LinearToSrgb(float c) => c <= 0.0031308f ? c * 12.92f : 1.055f * (float)Math.Pow(c, 1 / 2.4f) - 0.055f;
+
+            /// <summary>
+            /// Linear 色空間では、シェーダーは sRGB テクスチャを線形化した値に線形化したカラーを掛けるため、線形空間で乗算して sRGB に戻す。
+            /// Gamma 色空間（または非 sRGB テクスチャの Gamma 時）は値をそのまま乗算する。アルファは常に線形に乗算する。
+            /// </summary>
+            public static Color32[] Multiply(Color32[] source, Color color, bool srgbTexture, bool linearSpace)
+            {
+                var lut = new byte[3, 256];
+                var factor = new[] { color.r, color.g, color.b };
+                for (int ch = 0; ch < 3; ch++)
+                {
+                    float f = linearSpace ? SrgbToLinear(factor[ch]) : factor[ch];
+                    for (int v = 0; v < 256; v++)
+                    {
+                        float t = v / 255f;
+                        float r = linearSpace && srgbTexture ? LinearToSrgb(SrgbToLinear(t) * f) : t * f;
+                        lut[ch, v] = (byte)Math.Max(0, Math.Min(255, (int)Math.Round(r * 255)));
+                    }
+                }
+                var result = new Color32[source.Length];
+                for (int i = 0; i < source.Length; i++)
+                {
+                    var p = source[i];
+                    result[i] = new Color32(lut[0, p.r], lut[1, p.g], lut[2, p.b], (byte)Math.Round(p.a * color.a));
+                }
+                return result;
+            }
         }
 
         static long TriangleCount(Mesh mesh)

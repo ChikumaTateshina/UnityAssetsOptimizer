@@ -53,7 +53,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// </summary>
     public static class MaterialEquivalence
     {
-        public static string Key(Material m, bool textureContentBased, bool includeNonTextureValues = true, bool includeTextures = true)
+        public static string Key(Material m, bool textureContentBased, bool includeNonTextureValues = true, bool includeTextures = true,
+            ICollection<string> excludeProperties = null)
         {
             if (m == null) return "null";
             var shader = m.shader;
@@ -79,6 +80,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 var name = shader.GetPropertyName(i);
                 var type = shader.GetPropertyType(i);
+                if (excludeProperties != null && excludeProperties.Contains(name)) continue;
                 if (type == ShaderPropertyType.Texture)
                 {
                     if (!includeTextures) continue;

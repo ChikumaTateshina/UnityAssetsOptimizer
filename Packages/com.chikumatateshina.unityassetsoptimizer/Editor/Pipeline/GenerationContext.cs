@@ -37,6 +37,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public int Width;
         public int Height;
         public bool HasAlpha;
+        /// <summary>保存したファイル形式（PNG / JPEG）。</summary>
+        public string FileFormat;
         /// <summary>原本テクスチャのコピー（Importer の圧縮関連設定のみ変更する）。</summary>
         public bool IsCopy;
         public Texture2D Source;
@@ -150,8 +152,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 return inMemory;
             }
 
-            var path = AllocatePath("Textures", fileName, ".png");
-            File.WriteAllBytes(Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, path), inMemory.EncodeToPNG());
+            // 不透明なカラー/マスクは JPEG（既定の品質 95）。アルファを持つもの・ノーマルマップ（圧縮ノイズで法線が乱れる）は PNG
+            bool jpeg = Settings.atlasImageFormat == AtlasImageFormat.JpegWhenOpaque && !record.HasAlpha && !record.Import.NormalMap;
+            record.FileFormat = jpeg ? "JPEG" : "PNG";
+            var path = AllocatePath("Textures", fileName, jpeg ? ".jpg" : ".png");
+            var bytes = jpeg ? inMemory.EncodeToJPG(Mathf.Clamp(Settings.jpegQuality, 1, 100)) : inMemory.EncodeToPNG();
+            File.WriteAllBytes(Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, path), bytes);
             Object.DestroyImmediate(inMemory);
             AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
             ApplyImport(path, record);

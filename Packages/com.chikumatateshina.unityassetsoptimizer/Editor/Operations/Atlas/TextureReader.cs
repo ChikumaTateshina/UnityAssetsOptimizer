@@ -21,6 +21,21 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public bool AlphaFromInput;
         public FilterMode Filter;
         public int AnisoLevel;
+        /// <summary>テクスチャのない Material のメインカラーを表す単色ソース。</summary>
+        public bool Solid;
+        public Color32 SolidColor;
+
+        public static TextureSourceInfo SolidSource(Color color) => new TextureSourceInfo
+        {
+            Solid = true,
+            SolidColor = color,
+            Width = 16,
+            Height = 16,
+            SRgb = true,
+            AlphaFromInput = true,
+            Filter = FilterMode.Bilinear,
+            AnisoLevel = 1,
+        };
 
         /// <summary>同一アトラスチャンネルにまとめるために一致が必要な Importer 設定。</summary>
         public string ImportKey => string.Join("|", IsNormal, SRgb, FlipGreen, AlphaFromInput);
@@ -113,7 +128,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
             if (direct)
             {
+                // インポート設定の最大サイズ（現在のビルドターゲットの上書きを含む）を超えない解像度で扱う
                 importer.GetSourceTextureWidthAndHeight(out int w, out int h);
+                int maxSize = importer.maxTextureSize;
+                var platform = importer.GetPlatformTextureSettings(BuildPipeline.GetBuildTargetName(EditorUserBuildSettings.activeBuildTarget));
+                if (platform != null && platform.overridden) maxSize = platform.maxTextureSize;
+                int longest = Math.Max(w, h);
+                if (longest > maxSize && maxSize > 0)
+                {
+                    float scale = (float)maxSize / longest;
+                    w = Math.Max(1, (int)Math.Round(w * scale));
+                    h = Math.Max(1, (int)Math.Round(h * scale));
+                }
                 info.Width = w;
                 info.Height = h;
             }

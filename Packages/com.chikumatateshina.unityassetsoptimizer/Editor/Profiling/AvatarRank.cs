@@ -112,6 +112,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 var ratingType = FindType(Ns + "PerformanceRating");
                 bool mobile = platform != VrcPlatform.PC;
 
+                // SDK はエディタ起動後の更新処理で閾値データを読み込むため、起動直後や batchmode では未初期化のことがある
+                statsType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)?.Invoke(null, null);
+                RefreshConstraintGroups(roots[0]);
+
                 var stats = Activator.CreateInstance(statsType, new object[] { mobile });
                 var calc = perfType.GetMethod("CalculatePerformanceStats", new[] { typeof(string), typeof(GameObject), statsType, typeof(bool) });
                 if (calc == null) throw new MissingMethodException("AvatarPerformance.CalculatePerformanceStats");
@@ -171,6 +175,20 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             r.statusLabel = r.status.Label();
             return r;
+        }
+
+        /// <summary>SDK のビルド画面と同様に、評価前に VRC Constraint のグループを更新する（SDK にある場合のみ）。</summary>
+        static void RefreshConstraintGroups(GameObject root)
+        {
+            var manager = FindType("VRC.Dynamics.VRCConstraintManager");
+            var baseType = FindType("VRC.Dynamics.VRCConstraintBase");
+            if (manager == null || baseType == null) return;
+            var method = manager.GetMethod("Sdk_ManuallyRefreshGroups", BindingFlags.Public | BindingFlags.Static, null, new[] { baseType.MakeArrayType() }, null);
+            if (method == null) return;
+            var components = root.GetComponentsInChildren(baseType, true);
+            var array = Array.CreateInstance(baseType, components.Length);
+            Array.Copy(components, array, components.Length);
+            method.Invoke(null, new object[] { array });
         }
 
         /// <summary>

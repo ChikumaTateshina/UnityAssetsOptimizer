@@ -15,6 +15,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
     public enum PrefabOutputMode { VariantWhenPossible, Unpacked }
 
+    /// <summary>生成テクスチャ（アトラス）のファイル形式。</summary>
+    public enum AtlasImageFormat
+    {
+        /// <summary>不透明でノーマルマップでなければ JPEG、それ以外（アルファあり・ノーマルマップ）は PNG。</summary>
+        JpegWhenOpaque,
+        /// <summary>常に PNG（可逆）。</summary>
+        Png,
+    }
+
     [Serializable]
     public class OptimizationSettings
     {
@@ -32,6 +41,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         [Header("Texture Downscale")]
         public int downscaleMaxSize = 2048;
+
+        [Header("Atlas File")]
+        public AtlasImageFormat atlasImageFormat = AtlasImageFormat.JpegWhenOpaque;
+        /// <summary>JPEG の品質（1〜100）。既定の 95 は見た目で劣化が分からない程度。</summary>
+        [Range(1, 100)] public int jpegQuality = 95;
 
         [Header("Mesh")]
         /// <summary>SkinnedMeshRenderer も結合対象にするか（要件: 初期 OFF）。</summary>

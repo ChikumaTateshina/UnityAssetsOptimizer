@@ -151,21 +151,28 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             session.InputHash = HashUtility.Sha256(sb.ToString());
         }
 
+        /// <summary>
+        /// Performance Rank を評価する。SDK の評価は対象の状態（VRC Constraint のグループ等）を更新するため、
+        /// 原本や生成済み Prefab に触れないよう、常に一時的な複製（プレビューシーン）で評価する。
+        /// </summary>
         public static List<RankResult> EvaluateRanks(IList<GameObject> roots, bool buildTimeTools)
         {
             var list = new List<RankResult>();
             var official = new SdkOfficialRankProvider();
             var estimate = new VersionedEstimateRankProvider();
-            foreach (VrcPlatform platform in Enum.GetValues(typeof(VrcPlatform)))
+            using (var copy = WorkingCopy.Create(roots))
             {
-                var r = official.Evaluate(roots, platform, buildTimeTools);
-                if (r.status == RankStatus.Unavailable)
+                foreach (VrcPlatform platform in Enum.GetValues(typeof(VrcPlatform)))
                 {
-                    var e = estimate.Evaluate(roots, platform, buildTimeTools);
-                    e.reasons.InsertRange(0, r.reasons);
-                    r = e;
+                    var r = official.Evaluate(copy.Roots, platform, buildTimeTools);
+                    if (r.status == RankStatus.Unavailable)
+                    {
+                        var e = estimate.Evaluate(copy.Roots, platform, buildTimeTools);
+                        e.reasons.InsertRange(0, r.reasons);
+                        r = e;
+                    }
+                    list.Add(r);
                 }
-                list.Add(r);
             }
             return list;
         }
