@@ -59,6 +59,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public float[] lodRatios = { 0.5f, 0.25f };
         public float[] lodScreenHeights = { 0.5f, 0.2f, 0.05f };
 
+        [Header("Build-time Polygon Reduction (lilNDMFMeshSimplifier)")]
+        /// <summary>目標三角形数。0 なら VRChat SDK の PC Poor 基準（SDK 3.9 では 70,000）。</summary>
+        public int buildReductionTargetTriangles;
+        /// <summary>品質の下限（これより粗くしない）。</summary>
+        [Range(0.1f, 1f)] public float buildReductionMinQuality = 0.4f;
+        /// <summary>Viseme・まぶたに使う顔のメッシュは削減しない。</summary>
+        public bool protectFaceMesh = true;
+
         [Header("Output / Validation")]
         public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
         /// <summary>生成物（Prefab・Material・Mesh・Texture 等）の出力先（Assets 配下）。空なら実行フォルダ内。Manifest・スナップショット・レポートは常に管理フォルダに置く。</summary>

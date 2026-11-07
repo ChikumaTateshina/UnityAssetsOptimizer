@@ -549,6 +549,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var log = new RunLog();
             var s = settings.Clone();
             foreach (var f in s.features) if (f.mode == ExecutionMode.Force) f.mode = ExecutionMode.Auto;
+            // 外部ツールへの設定追加は、ビルド中（各ツールの処理順が決まった後）には行わない
+            s.SetMode(FeatureIds.AaoTraceAndOptimize, ExecutionMode.Off);
+            s.SetMode(FeatureIds.BuildPolygonReduction, ExecutionMode.Off);
             s.visualDiff = false;
 
             var session = Analyze(new[] { buildClone }, s);

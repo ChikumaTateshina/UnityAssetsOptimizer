@@ -19,6 +19,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public const string GpuInstancing = "gpu-instancing";
         public const string LightmapUv = "lightmap-uv";
         public const string ShaderReplace = "shader-replace";
+        public const string AaoTraceAndOptimize = "aao-trace-and-optimize";
+        public const string BuildPolygonReduction = "build-polygon-reduction";
     }
 
     /// <summary>機能の既定値。null はそのプリセットでは対象外。</summary>
@@ -54,6 +56,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             Def(FeatureIds.GpuInstancing, "GPU Instancing支援", true, false, 3, "競合判定"),
             Def(FeatureIds.LightmapUv, "Lightmap UV再生成", false, null, 3, "ベイクへの影響"),
             Def(FeatureIds.ShaderReplace, "Shader自動置換", false, false, 3, "Mobile Conversion で提供"),
+            Def(FeatureIds.AaoTraceAndOptimize, "AAO Trace And Optimize（ビルド時）", null, true, 3, "Avatar Optimizer（anatawa12）が必要。BlendShape・未使用オブジェクト/ボーン・PhysBone・Animator を最適化"),
+            Def(FeatureIds.BuildPolygonReduction, "ビルド時ポリゴン削減（SkinnedMesh 可）", null, false, 4, "lilNDMFMeshSimplifier（lilxyzw）が必要。目標三角形数に合わせて品質を設定、顔のメッシュは保護"),
         };
 
         public static FeatureDefinition Get(string id)

@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.7.0] - 2026-11-07
+
+広く使われているビルド時ツールとの連携を追加（導入されていなければ VCC へのリポジトリ追加ボタンと導入手順を表示し、処理はスキップ）。
+
+### Added
+- AAO Trace And Optimize（Avatar Optimizer 1.8 系）: Avatar プリセットでは既定 ON。出力アバターのルートに付け、
+  アップロード時に BlendShape・未使用オブジェクト/ボーン・PhysBone・Animator の最適化と SkinnedMesh の自動結合が行われる
+- ビルド時ポリゴン削減（lilNDMFMeshSimplifier 0.3 系）: SkinnedMesh も BlendShape・ボーンを保ったまま削減。
+  目標三角形数（既定は VRChat SDK の PC Poor 基準）に収まる品質を計算して各メッシュに設定し、Viseme・まぶたの顔メッシュは保護する（既定 OFF）
+- ビルド後の評価（Avatar Rank タブ）: NDMF をアバターの複製に適用し、アップロード時と同じ構成で Rank・三角形数を評価する（原本・プロジェクトは変更しない）
+- ファイルサイズの計測（Avatar Rank タブ）: NDMF 適用後の構成を AssetBundle にビルドし、アップロード時と同じ圧縮後/展開後のサイズを
+  処理前・処理後で比較する（NDMF がない場合は Prefab のまま計測。一時ファイルは計測後に削除）
+- 連携ツールの導入状況の表示（Avatar プリセット）
+
+### 実アバターでの確認（Renard、AAO・lilNDMFMeshSimplifier・Modular Avatar 使用、SkinnedMesh 結合・ビルド時ポリゴン削減 ON）
+- ビルド後: 三角形 193,483 → 89,695、SkinnedMesh 38 → 13、Renderer 80 → 27、マテリアルスロット 102 → 62
+- サイズ（PC）: 圧縮後 21.77 MB → 20.26 MB、展開後 97.94 MB → 90.23 MB
+- Rank は PhysBone・ライト等が VeryPoor のため VeryPoor のまま
+
 ## [0.6.0] - 2026-11-07
 
 実アバター（Renderer 80・Material 49・約19万ポリゴン、Modular Avatar / AAO 使用）での試験運用で見つかった問題を修正。

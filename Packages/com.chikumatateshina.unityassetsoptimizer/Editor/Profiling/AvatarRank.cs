@@ -171,6 +171,25 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return Finish(result);
         }
 
+        /// <summary>SDK の閾値（例: rating "Poor"、field "polyCount"）。SDK がなければ null。</summary>
+        public static double? StatLimit(string rating, bool mobile, string field)
+        {
+            try
+            {
+                if (!IsAvailable(out _)) return null;
+                var statsType = FindType(Ns + "Stats.AvatarPerformanceStats");
+                var ratingType = FindType(Ns + "PerformanceRating");
+                statsType.GetMethod("Initialize", BindingFlags.Public | BindingFlags.Static, null, Type.EmptyTypes, null)?.Invoke(null, null);
+                var levelFor = statsType.GetMethod("GetStatLevelForRating", BindingFlags.Public | BindingFlags.Static);
+                var level = levelFor?.Invoke(null, new object[] { Enum.Parse(ratingType, rating), mobile });
+                return level == null ? null : ReadNumber(level, field);
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         static RankResult Finish(RankResult r)
         {
             r.statusLabel = r.status.Label();

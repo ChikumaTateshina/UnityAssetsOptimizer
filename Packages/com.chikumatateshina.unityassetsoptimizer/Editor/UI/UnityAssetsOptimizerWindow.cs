@@ -20,6 +20,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         [SerializeField] int _rankPlatform;
         [SerializeField] bool _showParams;
         [SerializeField] bool _showPlans = true;
+        [SerializeField] bool _measureBuildSize;
         Vector2 _scroll;
 
         OptimizationSettings _settings;
@@ -34,6 +35,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         readonly HashSet<string> _expandedPlans = new HashSet<string>();
         IOptimizationOperation[] _operations;
         AnalysisSession _mobileSession;
+        BuildEvaluation _buildBefore;
+        BuildEvaluation _buildAfter;
+        BundleSize _sizeBefore;
+        BundleSize _sizeAfter;
 
         // ---- 解析・予測の自動実行（バックグラウンド）
         const double RestartDelaySeconds = 0.6;
@@ -322,6 +327,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 }
             }
 
+            if (_settings.preset == ContentPreset.Avatar) DrawExternalTools();
+
             _showParams = EditorGUILayout.Foldout(_showParams, "詳細パラメータ", true);
             if (!_showParams) return;
             EditorGUI.indentLevel++;
@@ -340,10 +347,34 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             _settings.meshCombineCellSize = EditorGUILayout.FloatField(new GUIContent("メッシュ結合: 空間セル(m)", "セルを跨いで結合しない（カリング単位の保護）"), _settings.meshCombineCellSize);
             _settings.polygonReductionRatio = EditorGUILayout.Slider("ポリゴン削減: 目標比率", _settings.polygonReductionRatio, 0.05f, 0.95f);
             _settings.decimationMaxError = EditorGUILayout.Slider(new GUIContent("簡略化: 許容誤差", "境界ボックス対角長に対する比率。超える縮約は行わない"), _settings.decimationMaxError, 0.001f, 0.05f);
+            if (_settings.preset == ContentPreset.Avatar)
+            {
+                _settings.buildReductionTargetTriangles = EditorGUILayout.IntField(new GUIContent("ビルド時ポリゴン削減: 目標三角形数",
+                    "0 なら VRChat SDK の PC Poor 基準（SDK 3.9 では 70,000）"), Math.Max(0, _settings.buildReductionTargetTriangles));
+                _settings.buildReductionMinQuality = EditorGUILayout.Slider(new GUIContent("ビルド時ポリゴン削減: 最低品質", "これより粗くしない（1 = 削減なし）"), _settings.buildReductionMinQuality, 0.1f, 1f);
+                _settings.protectFaceMesh = EditorGUILayout.Toggle(new GUIContent("ビルド時ポリゴン削減: 顔を保護", "Viseme・まぶたに使うメッシュは削減しない"), _settings.protectFaceMesh);
+            }
             _settings.outputMode = (PrefabOutputMode)EditorGUILayout.EnumPopup(new GUIContent("出力形式", "VariantWhenPossible: 元 Prefab の Variant として出力（構造変更のないインスタンス/Prefab Asset のみ）"), _settings.outputMode);
             _settings.visualDiff = EditorGUILayout.Toggle(new GUIContent("外観の参考比較", "隔離プレビューで前後をレンダリングし画像差分を記録（参考値）"), _settings.visualDiff);
             if (EditorGUI.EndChangeCheck()) SettingsChanged();
             EditorGUI.indentLevel--;
+        }
+
+        /// <summary>連携ツールの導入状況。未導入なら VCC へのリポジトリ追加ボタンを出す。</summary>
+        void DrawExternalTools()
+        {
+            EditorGUILayout.LabelField("連携ツール（導入済みなら自動で使用）", EditorStyles.miniBoldLabel);
+            foreach (var tool in ExternalTools.All)
+            {
+                bool ok = tool.IsAvailable(out var reason);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField((ok ? "✓ " : "－ ") + tool.DisplayName, GUILayout.Width(190));
+                    EditorGUILayout.LabelField(ok ? reason : (tool.InstalledVersion == null ? "未導入" : reason), EditorStyles.miniLabel);
+                    if (!ok && tool.InstalledVersion == null && GUILayout.Button(new GUIContent("VCC に追加", tool.InstallHint), GUILayout.Width(80)))
+                        Application.OpenURL(tool.VccAddRepositoryUrl);
+                }
+            }
         }
 
         void SettingsChanged()
@@ -589,6 +620,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             Summary("処理後", after);
             foreach (var reason in before?.reasons ?? new List<string>())
                 EditorGUILayout.HelpBox(reason, MessageType.Info);
+            DrawBuildEvaluation();
 
             EditorGUILayout.Space();
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
@@ -616,6 +648,102 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     GUILayout.Label(row.excess, GUILayout.Width(60));
                     GUILayout.Label(row.rank);
                 }
+            }
+        }
+
+        GameObject LastGeneratedPrefab =>
+            _lastRun != null && _lastRun.Success && _lastRun.GeneratedPrefabs.Count > 0 ? AssetDatabase.LoadAssetAtPath<GameObject>(_lastRun.GeneratedPrefabs[0]) : null;
+
+        /// <summary>アップロード時と同じ（NDMF 適用後の）構成での評価と、AssetBundle のサイズ計測。時間がかかるため明示的に実行する。</summary>
+        void DrawBuildEvaluation()
+        {
+            EditorGUILayout.Space();
+            EditorGUILayout.LabelField("ビルド後の評価（任意・数秒〜数十秒かかります）", EditorStyles.boldLabel);
+            var original = _targets.FirstOrDefault(t => t != null);
+            var generated = LastGeneratedPrefab;
+            bool ndmf = NdmfBuildEvaluator.IsAvailable(out var ndmfReason);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (ndmf)
+                {
+                    using (new EditorGUI.DisabledScope(original == null))
+                        if (GUILayout.Button(new GUIContent("NDMF 適用後で評価", "Modular Avatar・AAO・lilNDMFMeshSimplifier 等を適用した複製で評価（原本は変更しません）")))
+                            RunBuildEvaluation(original, generated);
+                    _measureBuildSize = EditorGUILayout.ToggleLeft(new GUIContent("ファイルサイズも計測",
+                        "AssetBundle をビルドして圧縮後/展開後のサイズを計測（現在のビルドターゲット: " + EditorUserBuildSettings.activeBuildTarget + "。初回はシェーダーのコンパイルで時間がかかります）"), _measureBuildSize);
+                }
+                else
+                {
+                    EditorGUILayout.LabelField(ndmfReason, EditorStyles.wordWrappedMiniLabel);
+                    using (new EditorGUI.DisabledScope(original == null))
+                        if (GUILayout.Button(new GUIContent("ファイルサイズを計測", "AssetBundle をビルドして圧縮後/展開後のサイズを計測（現在のビルドターゲット: " + EditorUserBuildSettings.activeBuildTarget + "）"), GUILayout.Width(140)))
+                            RunBundleMeasure(original, generated);
+                }
+            }
+
+            foreach (var e in new[] { _buildBefore, _buildAfter }.Where(e => e != null))
+            {
+                if (e.Error != null)
+                {
+                    EditorGUILayout.HelpBox(e.Label + ": " + e.Error, MessageType.Warning);
+                    continue;
+                }
+                var r = e.Ranks.ElementAtOrDefault(_rankPlatform);
+                var tris = e.Metrics?.Get(MetricKeys.Triangles);
+                EditorGUILayout.LabelField(e.Label + ": " + (r == null ? "—" : r.rank + "  [" + r.status.Label() + "]") +
+                                           (tris == null ? string.Empty : "  三角形 " + tris.value.ToString("N0", CultureInfo.InvariantCulture)));
+                if (r != null)
+                    foreach (var row in r.rows.Where(row => row.excess != "0" && row.excess != "—"))
+                        EditorGUILayout.LabelField("    " + row.label + ": " + row.value.ToString("N0", CultureInfo.InvariantCulture) + "（Excellent 上限 " + row.excess + "、" + row.rank + "）", EditorStyles.miniLabel);
+            }
+            foreach (var s in new[] { _sizeBefore, _sizeAfter, _buildBefore?.Size, _buildAfter?.Size }.Where(s => s != null))
+            {
+                if (s.Error != null) EditorGUILayout.HelpBox(s.Label + ": " + s.Error, MessageType.Warning);
+                else EditorGUILayout.LabelField(s.Label + ": 圧縮後 " + BuildEvaluator.FormatBytes(s.Compressed) + " / 展開後 " + BuildEvaluator.FormatBytes(s.Uncompressed));
+            }
+        }
+
+        void RunBuildEvaluation(GameObject original, GameObject generated)
+        {
+            int counter = _changeCounter;
+            try
+            {
+                EditorUtility.DisplayProgressBar("UnityAssetsOptimizer", "NDMF 適用後の構成で評価中（処理前）", 0.2f);
+                _buildBefore = BuildEvaluator.Evaluate(original, "ビルド後（処理前）", _measureBuildSize);
+                _buildAfter = null;
+                _sizeBefore = _sizeAfter = null;
+                if (generated != null)
+                {
+                    EditorUtility.DisplayProgressBar("UnityAssetsOptimizer", "NDMF 適用後の構成で評価中（処理後）", 0.6f);
+                    _buildAfter = BuildEvaluator.Evaluate(generated, "ビルド後（処理後）", _measureBuildSize);
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+                _changeCounter = counter; // 評価は複製のみを扱うため、自動解析の再実行は不要
+            }
+        }
+
+        void RunBundleMeasure(GameObject original, GameObject generated)
+        {
+            int counter = _changeCounter;
+            try
+            {
+                EditorUtility.DisplayProgressBar("UnityAssetsOptimizer", "AssetBundle をビルドしてサイズを計測中（処理前）", 0.2f);
+                _sizeBefore = BuildEvaluator.MeasureBundle(original, "サイズ（処理前）");
+                _sizeAfter = null;
+                _buildBefore = _buildAfter = null;
+                if (generated != null)
+                {
+                    EditorUtility.DisplayProgressBar("UnityAssetsOptimizer", "AssetBundle をビルドしてサイズを計測中（処理後）", 0.6f);
+                    _sizeAfter = BuildEvaluator.MeasureBundle(generated, "サイズ（処理後）");
+                }
+            }
+            finally
+            {
+                EditorUtility.ClearProgressBar();
+                _changeCounter = counter; // 一時 Prefab は計測後に削除済み
             }
         }
 

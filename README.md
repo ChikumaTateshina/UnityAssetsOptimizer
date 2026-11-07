@@ -41,7 +41,7 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - Manual Override（`Tools > UnityAssetsOptimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
-### 実装状況（v0.5.0）
+### 実装状況（v0.7.0）
 
 | 機能 | 状態 |
 |---|---|
@@ -56,6 +56,9 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 | Avatar Performance Rank | VRChat SDK の公式評価 API で算出（PC / Android / iOS） |
 | Android / iOS 派生版の生成 | 実装済み（SDK 3.9 系で検証。SDK の検証 API で判定、実機検証は対象外） |
 | NDMF でのビルド時適用 | 実装済み（NDMF がある場合のみ有効） |
+| AAO Trace And Optimize の設定 | 実装済み（Avatar Optimizer 1.8 系が入っている場合） |
+| ビルド時ポリゴン削減（SkinnedMesh 可） | 実装済み（lilNDMFMeshSimplifier 0.3 系が入っている場合。目標は SDK の PC Poor 基準、顔は保護） |
+| ビルド後（NDMF 適用後）の Rank 評価・ファイルサイズ計測 | 実装済み（Avatar Rank タブ） |
 | Manual Override（FORCE・監査ログ） | 実装済み |
 | Mesh Compression | 実装しない（誤差を検証できないため） |
 | Poiyomi Pro / ロック済み Poiyomi | 未対応（Pro は未確認。ロック済みはロック解除してから実行） |
@@ -68,6 +71,14 @@ NDMF（Modular Avatar 等に同梱）が入っているプロジェクトでは�
 **Add Component → UnityAssetsOptimizer → Build Optimizer (NDMF)** を追加すると、
 アップロード時・Play 時にビルド用のコピーにだけ最適化を適用します（元のアバターやシーンは変更しません）。
 Avatar Optimizer（AAO）と併用する場合は、AAO より前に実行されます。
+
+### 連携ツール
+
+以下のツールが導入されていれば自動で使います（未導入ならウィンドウに「VCC に追加」ボタンが表示されます）。
+
+- [Avatar Optimizer](https://vpm.anatawa12.com/)（anatawa12）: 未使用オブジェクト・BlendShape・PhysBone 等の最適化
+- [lilNDMFMeshSimplifier](https://github.com/lilxyzw/lilNDMFMeshSimplifier)（lilxyzw）: ビルド時のポリゴン削減
+- [NDMF](https://ndmf.nadena.dev/)（bd_）: ビルド後の構成での評価
 
 ## 開発
 

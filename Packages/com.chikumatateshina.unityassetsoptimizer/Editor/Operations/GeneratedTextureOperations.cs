@@ -194,6 +194,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 new TextureCompressionOperation(),
                 new UnimplementedOperation(FeatureIds.MeshCompression, 2, MeshCompressionReason),
                 new UnimplementedOperation(FeatureIds.ShaderReplace, 3, ShaderReplaceReason),
+                new BuildPolygonReductionOperation(),
+                new AaoTraceAndOptimizeOperation(),
             };
         }
     }

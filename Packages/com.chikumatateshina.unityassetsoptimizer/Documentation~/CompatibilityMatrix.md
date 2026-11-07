@@ -3,7 +3,7 @@
 実装仕様書 §16 に基づき、対象 Unity / VRChat SDK / 外部パッケージの公開 API・仕様の検証状況を記録する。
 **「未検証」の項目は実装済みとして扱わず、該当機能は無効（取得不可/変換不可/スキップ）とする。**
 
-最終更新: 2026-11-07（v0.6.0）
+最終更新: 2026-11-07（v0.7.0）
 
 ## 検証環境
 
@@ -14,6 +14,8 @@
 | NDMF | 1.9.4 | `Plugin<T>` / `BuildPhase.Optimizing` / `Sequence.Run` / `INDMFEditorOnly` のソースを確認し、`AvatarProcessor.ProcessAvatar` でテスト |
 | lilToon | 2.3.1 | `Shader/lts*.shader` と `Includes/lil_common_frag.hlsl` でテクスチャの UV を確認し、テスト |
 | Poiyomi Toon（無料版） | 10.0.29（ThryEditor 2.74.4） | `Shaders/10.0/Toon/*.shader` の全サンプル呼び出しを抽出して分類し、テスト |
+| Avatar Optimizer（anatawa12） | 1.8.14（使用範囲 >=1.8.0 <2.0.0） | `TraceAndOptimize` のソース（公開 API は型のみ・既定値で使用）を確認し、テスト |
+| lilNDMFMeshSimplifier（lilxyzw） | 0.3.0（使用範囲 >=0.3.0 <0.4.0） | `NDMFMeshSimplifier`（`quality` 0〜1）と NDMF プラグインのソースを確認し、テスト |
 
 ## Shader Adapter（アトラス化）
 
@@ -78,6 +80,20 @@ Poiyomi の条件（いずれかに該当すると AUTO でアトラス化しな
 - `Optimizing` フェーズで、Avatar Optimizer（`com.anatawa12.avatar-optimizer`）より前に実行する
 - ビルド用クローンにだけ AUTO の処理を適用する。FORCE、元テクスチャのコピー、スナップショットは使わない。生成物は `BuildContext.AssetSaver` に保存する
 
+## 連携ツール
+
+導入済みかつ使用範囲内の版の場合のみ使う（範囲外・未導入はスキップし、理由と導入手順を表示）。コンパイル時の依存は持たない。
+
+| ツール | 使い方 | VPM リポジトリ |
+|---|---|---|
+| Avatar Optimizer | 出力アバターのルートに `TraceAndOptimize` を既定値で追加（既にあれば何もしない） | https://vpm.anatawa12.com/vpm.json |
+| lilNDMFMeshSimplifier | 削減対象の Renderer に `NDMFMeshSimplifier` を追加し `quality` を設定（既にあれば尊重）。品質 = (目標 − 対象外の三角形) ÷ 対象の三角形、下限は設定値 | https://lilxyzw.github.io/vpm-repos/vpm.json |
+| NDMF | ビルド後の評価で `AvatarProcessor.ProcessAvatar` を複製に適用（`OverrideTemporaryDirectoryScope` で生成物を一時フォルダに保存し、評価後に削除） | https://vpm.nadena.dev/vpm.json |
+
+- どちらもアップロード時（NDMF のビルド）に処理されるため、効果は「ビルド後の評価」で確認する
+- NDMF のビルド時適用（Build Optimizer コンポーネント）からは追加しない（ビルド中は各ツールの処理順が確定しているため）
+- VRCFury など NDMF 以外のビルド時ツールの処理はビルド後の評価に含まれない（Rank は「評価不完全」）
+
 ## 計測
 
 | 指標 | 区分 |
@@ -87,6 +103,7 @@ Poiyomi の条件（いずれかに該当すると AUTO でアトラス化しな
 | Texture GPU メモリ | 推定（graphicsFormat × 解像度 × ミップ。常駐 VRAM ではない） |
 | Draw Calls / SetPass / Batches | 推定（モデル推定: Built-in Forward・平行光源1灯・影なし・バッチングなし・全可視） |
 | CPU/GPU 描画時間 | 取得不可（実機/Profiler での実測が必要） |
+| ファイルサイズ（圧縮後 / 展開後） | 確定計算（現在のビルドターゲットで AssetBundle をビルド。NDMF があれば適用後の構成、なければ Prefab のまま） |
 | 外観の参考比較 | 隔離プレビューで3方向から描画した画像差分（参考値。グラフィックスデバイスがない環境では取得不可） |
 
 ## 実装しないもの
