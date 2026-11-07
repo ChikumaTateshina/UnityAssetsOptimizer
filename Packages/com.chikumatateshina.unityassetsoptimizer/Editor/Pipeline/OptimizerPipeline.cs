@@ -65,6 +65,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public string ReportPath;
         public ConversionReport Conversion;
         public VisualDiffResult VisualDiff;
+        /// <summary>出力を上書きした前回の実行（なければ null）と、その内容。</summary>
+        public string OverwrittenRunId;
+        public string OverwriteSummary;
     }
 
     /// <summary>処理の中断（fail-closed）。</summary>
@@ -336,6 +339,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             SnapshotResult snapshot = null;
             List<SceneState> sceneStates = null;
             List<OperationPlan> plans = null;
+            RunOverwrite overwrite = null;
 
             try
             {
@@ -350,7 +354,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 var outputFolderError = OptimizationSettings.ValidateOutputFolder(session.Settings.prefabOutputFolder);
                 if (outputFolderError != null) throw new OptimizerAbortException(outputFolderError);
 
-                result.RunId = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + HashUtility.Short(session.InputHash, 6);
+                var baseId = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + HashUtility.Short(session.InputHash, 6);
+                result.RunId = baseId;
+                // 同じ対象を同じ秒に再実行した場合は連番を付ける
+                for (int n = 2; n < 100 && (AssetDatabase.IsValidFolder(UnityAssetsOptimizerInfo.RunFolder(result.RunId)) ||
+                                            Directory.Exists(Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, UnityAssetsOptimizerInfo.RunFolder(result.RunId)))); n++)
+                    result.RunId = baseId + "-" + n;
                 report.runId = result.RunId;
                 runFolder = UnityAssetsOptimizerInfo.RunFolder(result.RunId);
                 result.RunFolder = runFolder;
@@ -435,6 +444,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var o in gen.Outputs) o.path = generatedFolder + o.path.Substring(staging.Length);
                 result.GeneratedPrefabs = prefabPaths.Select(p => generatedFolder + p.Substring(staging.Length)).ToList();
 
+                // 同じ対象の前回の出力があれば退避する（新しい生成物が同じ名前を使えるように。失敗時は元に戻す）
+                if (session.Settings.overwritePreviousOutput)
+                {
+                    var previous = RunOverwrite.FindPrevious(session.Selection.Targets, session.Kind);
+                    if (previous != null)
+                    {
+                        Step("前回の出力を上書き: " + previous.Manifest.runId, 0.82f);
+                        overwrite = new RunOverwrite { Previous = previous };
+                        overwrite.Prepare(gen.Outputs.Select(o => o.path));
+                    }
+                }
+
                 // 出力先が指定されていれば、生成物（Prefab・Material・Mesh・Texture 等）をすべてそこへ移す。
                 // サブフォルダ構成（Materials/ 等）は保ち、名前が重なれば別名にする。GUID は維持されるため参照は切れない。
                 // 復元用の Manifest・スナップショット・レポートは管理フォルダに残す。
@@ -457,6 +478,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         result.MovedOutputs.Add(to);
                     }
                     AssetPathUtility.DeleteEmptyFolders(AssetDatabase.GetSubFolders(generatedFolder).Concat(new[] { generatedFolder }).ToList());
+                }
+
+                if (overwrite != null)
+                {
+                    overwrite.ReplacePrefabs(gen.Outputs);
+                    result.OverwrittenRunId = overwrite.Previous.Manifest.runId;
+                    result.OverwriteSummary = "前回の実行 " + result.OverwrittenRunId + " の出力を上書きしました（Prefab " + overwrite.ReplacedPrefabs +
+                                              " 件は GUID を維持、生成物 " + overwrite.RemovedAssets + " 件を削除" +
+                                              (overwrite.Kept.Count > 0 ? "、ほかのアセットから参照されている " + overwrite.Kept.Count + " 件は残しました" : string.Empty) + "）";
+                    log.Info("pipeline", result.OverwriteSummary);
                 }
 
                 Step("事後計測", 0.9f);
@@ -495,6 +526,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     settingsHash = session.SettingsHash,
                     snapshotHash = snapshot.SnapshotHash,
                     state = RunState.Committed,
+                    runKind = session.Kind.ToString(),
                 };
                 manifest.targets.AddRange(session.Selection.Targets);
                 manifest.outputs.AddRange(gen.Outputs);
@@ -514,6 +546,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 committed = true;
                 result.Success = true;
                 log.Info("pipeline", "コミット完了: " + runFolder);
+                try
+                {
+                    overwrite?.Finish(result.RunId);
+                }
+                catch (Exception e)
+                {
+                    // 新しい出力は確定済み。退避した前回の出力が残るだけなので警告にとどめる
+                    Debug.LogWarning("[UnityAssetsOptimizer] 前回の出力の後片付けに失敗しました: " + e.Message);
+                }
             }
             catch (OperationCanceledException e)
             {
@@ -535,7 +576,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 copy?.Dispose();
             }
 
-            if (!committed) Rollback(result, report, plans, snapshot, session, sceneStates, runFolder, log);
+            if (!committed)
+            {
+                try
+                {
+                    overwrite?.Undo();
+                }
+                catch (Exception e)
+                {
+                    log.Error("rollback", "前回の出力を元に戻せませんでした（" + overwrite.Previous.RunFolder + "/_Overwritten を確認してください）: " + e.Message);
+                }
+                Rollback(result, report, plans, snapshot, session, sceneStates, runFolder, log);
+            }
             return result;
         }
 

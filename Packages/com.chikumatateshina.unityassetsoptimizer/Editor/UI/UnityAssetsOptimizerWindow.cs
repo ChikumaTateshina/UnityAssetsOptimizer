@@ -448,6 +448,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
             var error = OptimizationSettings.ValidateOutputFolder(_settings.prefabOutputFolder);
             if (error != null) EditorGUILayout.HelpBox(error, MessageType.Error);
+            bool overwrite = EditorGUILayout.ToggleLeft(new GUIContent("再変換時は前回の出力を上書きする",
+                "同じ対象を再変換したとき、前回の Prefab を GUID を保ったまま新しい内容にし（シーンに置いた Prefab はそのまま更新されます）、" +
+                "前回の Material・Mesh 等はほかから参照されていなければ削除します。OFF なら毎回新しく作ります"), _settings.overwritePreviousOutput);
+            if (overwrite != _settings.overwritePreviousOutput)
+            {
+                _settings.overwritePreviousOutput = overwrite;
+                SaveSettings();
+            }
         }
 
         static string OutputDescription(OptimizationSettings settings) =>
@@ -655,6 +663,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         EditorGUILayout.LabelField(p, EditorStyles.miniLabel);
                         if (GUILayout.Button("Ping", GUILayout.Width(50))) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<GameObject>(p));
                     }
+                if (_lastRun.OverwriteSummary != null)
+                    EditorGUILayout.LabelField(_lastRun.OverwriteSummary, EditorStyles.wordWrappedMiniLabel);
                 if (_lastRun.VisualDiff != null)
                     EditorGUILayout.LabelField("外観の参考比較（処理後）: " + ReportWriter.DescribeDiff(_lastRun.VisualDiff), EditorStyles.wordWrappedMiniLabel);
                 if (_lastRun.Report?.integrity != null)
@@ -901,6 +911,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     }
                     var m = run.Manifest;
                     EditorGUILayout.LabelField("作成: " + m.createdAtUtc + " / 対象: " + string.Join(", ", m.targets.Select(t => t.displayPath)), EditorStyles.wordWrappedMiniLabel);
+                    if (m.state == RunState.Overwritten)
+                        EditorGUILayout.LabelField("再変換で上書き済み（→ " + m.overwrittenBy + "）。残っている生成物はほかのアセットから参照されているものだけです。", EditorStyles.wordWrappedMiniLabel);
                     EditorGUILayout.LabelField("生成物 " + m.outputs.Count + " 件 / スナップショット " + m.snapshotAssets.Count + " 件 / FORCE 承認 " + m.forceApprovals.Count + " 件", EditorStyles.miniLabel);
 
                     using (new EditorGUILayout.HorizontalScope())

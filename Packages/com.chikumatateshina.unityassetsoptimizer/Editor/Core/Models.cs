@@ -174,6 +174,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public List<ForceApproval> forceApprovals = new List<ForceApproval>();
         /// <summary>出力先に新しく作ったフォルダ（破棄時に空なら削除する）。</summary>
         public List<string> createdFolders = new List<string>();
+        /// <summary>Optimize / Android / iOS。</summary>
+        public string runKind;
+        /// <summary>再変換で出力を上書きした実行の ID（state が Overwritten の場合）。</summary>
+        public string overwrittenBy;
 
         public void OnBeforeSerialize() { stateName = state.ToString(); }
         public void OnAfterDeserialize() { }

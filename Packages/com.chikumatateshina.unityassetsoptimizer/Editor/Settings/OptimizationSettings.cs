@@ -84,6 +84,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
         /// <summary>生成物（Prefab・Material・Mesh・Texture 等）の出力先（Assets 配下）。空なら実行フォルダ内。Manifest・スナップショット・レポートは常に管理フォルダに置く。</summary>
         public string prefabOutputFolder = string.Empty;
+        /// <summary>同じ対象を再変換したら、前回の出力（Prefab は GUID を保って）を上書きする。</summary>
+        public bool overwritePreviousOutput = true;
         /// <summary>隔離プレビューで前後をレンダリングし、画像差分を参考値として記録する。</summary>
         public bool visualDiff = true;
 
@@ -155,6 +157,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             var copy = Clone();
             copy.prefabOutputFolder = string.Empty;
+            copy.overwritePreviousOutput = true;
             return HashUtility.Sha256(JsonUtility.ToJson(copy));
         }
 

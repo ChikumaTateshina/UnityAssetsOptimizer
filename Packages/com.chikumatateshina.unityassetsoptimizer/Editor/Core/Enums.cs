@@ -9,7 +9,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// <summary>指標値の信頼区分。予測値を実測値として扱わないために必ず付与する。</summary>
     public enum MetricKind { Calculated, Estimated, Measured, Unavailable }
 
-    public enum RunState { Created, Analyzed, Planned, Previewed, Approved, Generating, Validating, Committed, RolledBack, Failed }
+    public enum RunState { Created, Analyzed, Planned, Previewed, Approved, Generating, Validating, Committed, RolledBack, Failed, Overwritten }
 
     public enum ConversionState { Verified, Partial, Incompatible }
 
