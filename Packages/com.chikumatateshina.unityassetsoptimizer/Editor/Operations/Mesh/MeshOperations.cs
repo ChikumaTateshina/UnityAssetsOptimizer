@@ -21,7 +21,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public override OperationCapabilities Capabilities { get; } = new OperationCapabilities
         {
             Phase = 2,
-            RunsAfter = new[] { FeatureIds.Atlas, FeatureIds.MaterialDedupe },
+            RunsAfter = new[] { FeatureIds.Atlas, FeatureIds.MaterialDedupe, FeatureIds.LightmapBake },
             WritesAssetKinds = new[] { "Mesh" },
         };
 
@@ -59,7 +59,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 candidates.Add(new Candidate { Info = info, Item = item, KeyParts = parts, Key = string.Join("|", parts.Select(p => p.Value)) });
             }
             analysis.Data = candidates;
-            analysis.Notes.Add("結合後の Prefab はライトマップ情報を持ちません（再ベイクが必要）。");
+            analysis.Notes.Add("結合後の Prefab はライトマップ情報を持ちません（再ベイクが必要）。ライトマップの対象（Contribute GI）を結合した場合は、ライトマップ UV（UV1）が重ならないよう並べ直します。");
             analysis.Notes.Add("結合された側の GameObject は残り、Renderer/MeshFilter のみ削除されます（Collider はそのまま残ります）。");
             return analysis;
         }
@@ -223,6 +223,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 // 結合前にワールド境界を取得（スキンの localBounds 再計算用）
                 var worldBounds = renderers.Select(r => r.bounds).ToList();
                 var result = MeshMerger.Merge(sources, group.Skinned, target.name + "_combined");
+                // ライトマップの対象なら、各ソースのライトマップ UV が重ならないよう並べ直す（重なるとベイクした光が混ざる）
+                if (!group.Skinned && (GameObjectUtility.GetStaticEditorFlags(target.gameObject) & StaticEditorFlags.ContributeGI) != 0)
+                    MeshMerger.PrepareLightmapUvs(result.Mesh, result.VertexOffsets);
                 var mesh = gen.AddAsset(result.Mesh, "Meshes", result.Mesh.name, Id, string.Join(",", group.Members.Select(m => m.Key)));
 
                 if (target is SkinnedMeshRenderer targetSmr)
@@ -454,7 +457,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             Avatar = false,
             Phase = 3,
-            RunsAfter = new[] { FeatureIds.MeshCombine, FeatureIds.Atlas, FeatureIds.PolygonReduction },
+            RunsAfter = new[] { FeatureIds.MeshCombine, FeatureIds.Atlas, FeatureIds.PolygonReduction, FeatureIds.LightmapBake },
             WritesAssetKinds = new[] { "Mesh" },
         };
 
@@ -465,6 +468,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 var label = info.Path.Length == 0 ? "(root)" : info.Path;
                 if (!(info.Renderer is MeshRenderer) || info.Mesh == null) analysis.Items.Add(PlanItem.Skip(label, SupportState.Unsupported, "MeshRenderer 以外/Mesh なし"));
+                else if (context.LightBakedRendererKeys != null && context.LightBakedRendererKeys.Contains(info.Key))
+                    analysis.Items.Add(PlanItem.Skip(label, SupportState.Unsupported, "ライトマップを焼き込んだ（UV1 は光テクスチャ用）"));
                 else if ((GameObjectUtility.GetStaticEditorFlags(info.Renderer.gameObject) & StaticEditorFlags.ContributeGI) == 0)
                     analysis.Items.Add(PlanItem.Skip(label, SupportState.Unsupported, "Contribute GI が無効（ライトマップ対象外）"));
                 else analysis.Items.Add(PlanItem.Supported(label, "UV1 を再生成（既存 UV1 は上書き）"));

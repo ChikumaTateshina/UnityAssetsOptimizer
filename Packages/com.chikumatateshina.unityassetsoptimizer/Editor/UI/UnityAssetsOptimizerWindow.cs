@@ -375,6 +375,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             _settings.meshCombineCellSize = EditorGUILayout.FloatField(new GUIContent("メッシュ結合: 空間セル(m)", "セルを跨いで結合しない（カリング単位の保護）"), _settings.meshCombineCellSize);
             _settings.polygonReductionRatio = EditorGUILayout.Slider("ポリゴン削減: 目標比率", _settings.polygonReductionRatio, 0.05f, 0.95f);
             _settings.decimationMaxError = EditorGUILayout.Slider(new GUIContent("簡略化: 許容誤差", "境界ボックス対角長に対する比率。超える縮約は行わない"), _settings.decimationMaxError, 0.001f, 0.05f);
+            if (_settings.preset == ContentPreset.World && _settings.GetMode(FeatureIds.LightmapBake) != ExecutionMode.Off)
+            {
+                _settings.lightBakeShaderMode = (LightBakeShaderMode)EditorGUILayout.Popup(new GUIContent("ライトマップ焼き込み: シェーダー",
+                    "Unlit: 同梱の Unlit シェーダーに切り替え（強度は Material の Light Strength で後から調整可）。元のシェーダー: Standard は Detail Albedo、lilToon はメイン 2nd（乗算）に光を入れる"),
+                    (int)_settings.lightBakeShaderMode, new[] { new GUIContent("Unlit に切り替え"), new GUIContent("元のシェーダーのまま") });
+                _settings.lightBakeStrength = EditorGUILayout.Slider(new GUIContent("ライトマップ焼き込み: 強度", "0 = 焼き込まない、1 = ライトマップのまま"), _settings.lightBakeStrength, 0f, 1f);
+                _settings.lightBakeMaxSize = EditorGUILayout.IntPopup("ライトマップ焼き込み: 最大解像度", _settings.lightBakeMaxSize, AtlasSizes.Select(s => s.ToString()).ToArray(), AtlasSizes);
+            }
             if (_settings.preset == ContentPreset.Avatar)
             {
                 _settings.buildReductionTargetTriangles = EditorGUILayout.IntField(new GUIContent("ビルド時ポリゴン削減: 目標三角形数",

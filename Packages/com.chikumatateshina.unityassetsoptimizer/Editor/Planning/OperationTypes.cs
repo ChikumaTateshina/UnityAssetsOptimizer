@@ -161,6 +161,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public bool TextureContentDedupe;
         /// <summary>アトラス化で生成予定のテクスチャ数（後続のテクスチャ処理の対象有無判定用）。</summary>
         public int PlannedGeneratedTextureCount;
+        /// <summary>ライトマップを焼き込む Renderer（ライトマップ UV の再生成等で UV1 を変えない）。</summary>
+        public HashSet<string> LightBakedRendererKeys;
         /// <summary>機能カタログ外の Operation（モバイル変換等）や NDMF 実行時のモード指定。</summary>
         public Dictionary<string, ExecutionMode> ModeOverrides;
 

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.13.0] - 2026-11-08
+
+### Added
+- ライトマップ焼き込み（World、既定 OFF）: Unity（Progressive）・Bakery でベイクしてシーンに適用されたライトマップを、Renderer ごとに使っている部分だけ切り出して
+  1 枚の光テクスチャ（UV1）にまとめ、色に掛け合わせる。色のテクスチャ（アトラス）は複製しないため、同じ Material を使うオブジェクトもそれぞれの場所の光になる
+  - シェーダー: 「Unlit に切り替え」（同梱の `UnityAssetsOptimizer/Baked Light Unlit`。強度は Material の Light Strength で後から調整可）または
+    「元のシェーダーのまま」（Standard は Detail Albedo ×2、lilToon はメイン 2nd の乗算に光を入れる。lilToon は _Color2nd のアルファで強度を調整可）
+  - 強度（0〜1）と光テクスチャの最大解像度を設定可能。焼き込んだオブジェクトは Contribute GI を外し、再ベイクで光が二重にならないようにする
+  - ライトマップは GPU 経由で読み取り、保存形式（HDR / RGBM / dLDR）に応じて元の明るさに戻す
+
+### Fixed
+- 結合したメッシュをライトベイクすると光がちぐはぐになる問題: 各メッシュのライトマップ UV（UV1）がそのまま重なっていた。
+  ライトマップの対象（Contribute GI）を結合した場合は、各メッシュの UV1 を面積に比例した区画へ重ならないよう並べ直す（UV1 がなければ自動生成）
+
 ## [0.12.0] - 2026-11-08
 
 ### Changed

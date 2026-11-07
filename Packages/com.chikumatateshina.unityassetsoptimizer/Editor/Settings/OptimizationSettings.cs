@@ -52,6 +52,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         [Header("Atlas")]
         public int atlasMaxSize = 4096;
         public int atlasPadding = 8;
+        [Header("Lightmap Bake")]
+        public LightBakeShaderMode lightBakeShaderMode = LightBakeShaderMode.Unlit;
+        /// <summary>焼き込む光の強度（0 = 焼き込まない、1 = ライトマップのまま）。Unlit / lilToon は Material で後から調整できる。</summary>
+        [Range(0f, 1f)] public float lightBakeStrength = 1f;
+        public int lightBakeMaxSize = 2048;
+
         /// <summary>オブジェクトの大きさ（ワールド面積）に対して解像度が過剰なテクスチャを縮め、テクセル密度を揃えて配分する。</summary>
         public bool atlasBalanceByObjectSize = true;
 

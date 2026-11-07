@@ -190,6 +190,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 new LodGenerationOperation(),
                 new ColliderSimplifyOperation(),
                 new LightmapUvOperation(),
+                new LightmapBakeOperation(),
                 new VertexAttributeStripOperation(),
                 new TextureDownscaleOperation(),
                 new TextureCompressionOperation(),
