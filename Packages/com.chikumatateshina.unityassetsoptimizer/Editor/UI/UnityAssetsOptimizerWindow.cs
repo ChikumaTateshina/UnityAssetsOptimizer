@@ -21,6 +21,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         [SerializeField] bool _showParams;
         [SerializeField] bool _showPlans = true;
         [SerializeField] bool _measureBuildSize;
+        [SerializeField] bool _showSimilar = true;
         Vector2 _scroll;
 
         OptimizationSettings _settings;
@@ -35,6 +36,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         readonly HashSet<string> _expandedPlans = new HashSet<string>();
         IOptimizationOperation[] _operations;
         AnalysisSession _mobileSession;
+        List<SimilarMaterialGroup> _similarGroups;
+        AnalysisSession _similarFor;
+        int _similarMaxFor;
         BuildEvaluation _buildBefore;
         BuildEvaluation _buildAfter;
         BundleSize _sizeBefore;
@@ -521,9 +525,71 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var k in _dryRun.OutputKinds) EditorGUILayout.LabelField("出力形式: " + k, EditorStyles.miniLabel);
                 if (_dryRun.VisualDiff != null)
                     EditorGUILayout.LabelField("外観の参考比較（予測）: " + ReportWriter.DescribeDiff(_dryRun.VisualDiff), EditorStyles.wordWrappedMiniLabel);
-                DrawPlans(_dryRun.Plans);
             }
+            DrawSimilarMaterials();
+            if (_dryRun != null) DrawPlans(_dryRun.Plans);
             DrawLastRun();
+        }
+
+        /// <summary>近似 Material の一覧。チェックしたものだけが統合される（選択は設定に保存され、予測に反映される）。</summary>
+        void DrawSimilarMaterials()
+        {
+            if (_settings.GetMode(FeatureIds.SimilarMaterialMerge) == ExecutionMode.Off || _session == null) return;
+            if (_similarFor != _session || _similarMaxFor != _settings.similarMaxDifferences || _similarGroups == null)
+            {
+                // 同一 Material 統合後の Material で比較する（統合済みのものは候補に出さない）
+                var exact = _settings.GetMode(FeatureIds.MaterialDedupe) != ExecutionMode.Off
+                    ? MaterialEquivalence.BuildCanonicalMap(_session.Analysis.Renderers.SelectMany(r => r.Materials), _settings.GetMode(FeatureIds.TextureDedupe) != ExecutionMode.Off, out _)
+                    : new Dictionary<Material, Material>();
+                _similarGroups = MaterialSimilarity.FindGroups(_session.Analysis, m => m != null && exact.TryGetValue(m, out var c) ? c : m, _settings.similarMaxDifferences);
+                _similarFor = _session;
+                _similarMaxFor = _settings.similarMaxDifferences;
+            }
+            _showSimilar = EditorGUILayout.Foldout(_showSimilar, "近似 Material（選択して統合）: " + _similarGroups.Count + " グループ", true);
+            if (!_showSimilar) return;
+            EditorGUI.indentLevel++;
+            if (_similarGroups.Count == 0)
+                EditorGUILayout.LabelField("同じシェーダー・描画状態・テクスチャで、数値や色だけが違う Material はありません。", EditorStyles.wordWrappedMiniLabel);
+            else
+                EditorGUILayout.LabelField("チェックした Material は代表 Material に置き換わります（差分のプロパティは代表の値になり、外観が変わる場合があります）。", EditorStyles.wordWrappedMiniLabel);
+            _settings.similarMaxDifferences = EditorGUILayout.IntSlider(new GUIContent("差分プロパティ数の上限", "これ以下の差分のものを近似として表示"), _settings.similarMaxDifferences, 1, 32);
+
+            bool changed = false;
+            foreach (var group in _similarGroups)
+            {
+                var repId = MaterialEquivalence.StableId(group.Representative);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("代表: " + group.Representative.name + "（" + group.Representative.shader.name + "、" + group.RepresentativeSlots + " スロット）", EditorStyles.boldLabel);
+                    if (GUILayout.Button("Ping", GUILayout.Width(45))) EditorGUIUtility.PingObject(group.Representative);
+                    if (GUILayout.Button("すべて", GUILayout.Width(50)))
+                        foreach (var m in group.Members) changed |= SetMergeChoice(MaterialEquivalence.StableId(m.Material), repId, true);
+                    if (GUILayout.Button("解除", GUILayout.Width(45)))
+                        foreach (var m in group.Members) changed |= SetMergeChoice(MaterialEquivalence.StableId(m.Material), repId, false);
+                }
+                foreach (var member in group.Members)
+                {
+                    var id = MaterialEquivalence.StableId(member.Material);
+                    bool selected = _settings.similarMaterialMerges.Any(c => c.member == id && c.representative == repId);
+                    var detail = MaterialSimilarity.Describe(member.Differences);
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        bool now = EditorGUILayout.ToggleLeft(new GUIContent(member.Material.name + "（" + member.Slots + " スロット）", detail), selected, GUILayout.Width(260));
+                        if (now != selected) changed |= SetMergeChoice(id, repId, now);
+                        EditorGUILayout.LabelField(new GUIContent("差分 " + member.Differences.Count + ": " + detail, detail), EditorStyles.miniLabel);
+                        if (GUILayout.Button("Ping", GUILayout.Width(45))) EditorGUIUtility.PingObject(member.Material);
+                    }
+                }
+            }
+            EditorGUI.indentLevel--;
+            if (changed || _similarMaxFor != _settings.similarMaxDifferences) SettingsChanged();
+        }
+
+        bool SetMergeChoice(string member, string representative, bool on)
+        {
+            int removed = _settings.similarMaterialMerges.RemoveAll(c => c.member == member);
+            if (on) _settings.similarMaterialMerges.Add(new MaterialMergeChoice { member = member, representative = representative });
+            return on || removed > 0;
         }
 
         void DrawPlans(List<OperationPlan> plans)

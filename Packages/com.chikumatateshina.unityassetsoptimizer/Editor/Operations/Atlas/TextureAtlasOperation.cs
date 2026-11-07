@@ -23,7 +23,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             CanForce = true,
             Phase = 1,
-            RunsAfter = new[] { FeatureIds.MaterialDedupe },
+            RunsAfter = new[] { FeatureIds.MaterialDedupe, FeatureIds.SimilarMaterialMerge },
             WritesAssetKinds = new[] { "Texture2D(png)", "Material", "Mesh" },
         };
 

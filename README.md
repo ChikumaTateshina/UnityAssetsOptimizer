@@ -41,11 +41,12 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - Manual Override（`Tools > UnityAssetsOptimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
-### 実装状況（v0.7.0）
+### 実装状況（v0.8.0）
 
 | 機能 | 状態 |
 |---|---|
 | 対象選択・依存解析・スナップショット・トランザクション・復元 | 実装済み |
+| 近似 Material 統合（似た Material を表示し、選択したものだけ統合） | 実装済み |
 | アトラス化 / 同一 Material 統合 / 重複 Texture 検出 | 実装済み（Unity 組み込みシェーダー、lilToon 2.3.1、Poiyomi Toon 10.0.29） |
 | テクスチャ圧縮・解像度削減 | 実装済み（元のテクスチャはコピーを作って適用） |
 | メッシュ結合（静的 / SkinnedMesh）・不要頂点属性削除 | 実装済み |

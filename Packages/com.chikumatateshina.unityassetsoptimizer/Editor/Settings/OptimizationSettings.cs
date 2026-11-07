@@ -15,6 +15,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
     public enum PrefabOutputMode { VariantWhenPossible, Unpacked }
 
+    /// <summary>ユーザーが選んだ近似 Material の統合（Material はアセットパス + ローカル ID で識別）。</summary>
+    [Serializable]
+    public class MaterialMergeChoice
+    {
+        public string member;
+        public string representative;
+    }
+
     /// <summary>生成テクスチャ（アトラス）のファイル形式。</summary>
     public enum AtlasImageFormat
     {
@@ -67,6 +75,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         /// <summary>Viseme・まぶたに使う顔のメッシュは削減しない。</summary>
         public bool protectFaceMesh = true;
 
+        [Header("Similar Material Merge")]
+        /// <summary>近似とみなす差分プロパティ数の上限（数値・色のみ。テクスチャ・描画状態が違うものは候補にしない）。</summary>
+        [Range(1, 32)] public int similarMaxDifferences = 8;
+        public List<MaterialMergeChoice> similarMaterialMerges = new List<MaterialMergeChoice>();
+
         [Header("Output / Validation")]
         public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
         /// <summary>生成物（Prefab・Material・Mesh・Texture 等）の出力先（Assets 配下）。空なら実行フォルダ内。Manifest・スナップショット・レポートは常に管理フォルダに置く。</summary>
@@ -111,7 +124,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             if (!IsApplicable(id)) return ExecutionMode.Off;
             foreach (var f in features) if (f.id == id) return f.mode;
-            return ExecutionMode.Off;
+            // 保存済みの設定にない（後の版で追加された）機能はプリセットの既定値
+            return PresetMode(FeatureCatalog.Get(id));
         }
 
         public void SetMode(string id, ExecutionMode mode)

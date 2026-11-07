@@ -181,6 +181,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 new TextureDedupeOperation(),
                 new MaterialDedupeOperation(),
+                new SimilarMaterialMergeOperation(),
                 new TextureAtlasOperation(),
                 new MeshCombineOperation(),
                 new PolygonReductionOperation(),

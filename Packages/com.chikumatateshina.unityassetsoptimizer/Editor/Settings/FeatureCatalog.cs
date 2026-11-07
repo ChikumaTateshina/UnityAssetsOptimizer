@@ -5,6 +5,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     public static class FeatureIds
     {
         public const string MaterialDedupe = "material-dedupe";
+        public const string SimilarMaterialMerge = "similar-material-merge";
         public const string TextureDedupe = "texture-dedupe";
         public const string Atlas = "atlas";
         public const string TextureCompression = "texture-compression";
@@ -43,6 +44,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             Def(FeatureIds.Atlas, "アトラス化", true, true, 1, "互換グループのみ"),
             Def(FeatureIds.MaterialDedupe, "同一Material統合", true, true, 1, "プロパティ・描画状態の等価性確認"),
+            Def(FeatureIds.SimilarMaterialMerge, "近似Material統合（選択制）", true, true, 1, "似た Material を一覧表示し、選択したものだけ統合（自動では統合しない）"),
             Def(FeatureIds.TextureDedupe, "重複Texture検出/統合", true, true, 2, "内容・Importer設定を考慮（Material統合に反映）"),
             Def(FeatureIds.TextureCompression, "テクスチャ圧縮", true, true, 2, "ターゲット別設定（原本はコピーを生成して適用）"),
             Def(FeatureIds.TextureDownscale, "自動解像度削減", false, false, 2, "画質影響（原本はコピーを生成して適用）"),
