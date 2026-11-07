@@ -1,9 +1,11 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading.Tasks;
 using UnityEditor;
 using UnityEngine;
 
@@ -39,9 +41,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public VisualDiffResult VisualDiff;
         public ConversionReport Conversion;
         public List<string> OutputKinds = new List<string>();
+        /// <summary>Dry Run が最後まで終わったか（中断・エラー時は false）。</summary>
+        public bool Completed;
 
         public IEnumerable<OperationPlan> ForcePlans => Plans.Where(p => p.UsesForce);
-        public bool CanExecute => Error == null && ValidationPassed && !Session.Analysis.HasBlockingIssues && Plans.Any(p => p.WillExecute);
+        public bool CanExecute => Error == null && (Completed || Session.Analysis.HasBlockingIssues) && ValidationPassed && !Session.Analysis.HasBlockingIssues && Plans.Any(p => p.WillExecute);
     }
 
     public sealed class RunResult
@@ -83,38 +87,65 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public static AnalysisSession Analyze(IEnumerable<GameObject> selection, OptimizationSettings settings, RunKind kind = RunKind.Optimize)
         {
+            AnalysisSession result = null;
+            BackgroundJob.RunToCompletion(AnalyzeRoutine(selection, settings, kind, s => result = s));
+            return result;
+        }
+
+        /// <summary>解析（現在値の算出）のコルーチン。BackgroundJob で実行するとエディタの操作を妨げない。</summary>
+        public static IEnumerator AnalyzeRoutine(IEnumerable<GameObject> selection, OptimizationSettings settings, RunKind kind, Action<AnalysisSession> done)
+        {
             var session = new AnalysisSession { Settings = settings.Clone(), Kind = kind };
+            yield return new JobProgress("対象を解決しています", 0.02f);
             session.Selection = SelectionResolver.Resolve(selection);
-            session.Graph = DependencyGraph.Build(session.Selection.Roots);
-            session.Analysis = AssetAnalyzer.Analyze(session.Graph);
+            yield return new JobProgress("依存関係を解析しています", 0.05f);
+            yield return DependencyGraph.BuildRoutine(session.Selection.Roots, g => session.Graph = g);
+            yield return new JobProgress("コンポーネントを解析しています", 0.15f);
+            yield return AssetAnalyzer.AnalyzeRoutine(session.Graph, r => session.Analysis = r);
 
             if (settings.preset == ContentPreset.Avatar && !session.Analysis.HasAvatarDescriptor)
                 session.Analysis.Issues.Add(new AnalysisIssue { Source = "Preset", Message = "Avatar プリセットですが VRCAvatarDescriptor が見つかりません。" });
             if (settings.preset == ContentPreset.World && session.Analysis.HasAvatarDescriptor)
                 session.Analysis.Issues.Add(new AnalysisIssue { Source = "Preset", Message = "World プリセットですが VRCAvatarDescriptor が含まれています。" });
 
+            yield return new JobProgress("現在値を計算しています", 0.3f);
             session.Context = MeasurementContext.Capture("構造値（処理前の階層・アセットから計算）");
             session.Baseline = MetricsCalculator.Compute(session.Roots, session.Context);
-            session.InputHash = ComputeInputHash(session);
+            yield return new JobProgress("入力のハッシュを計算しています", 0.35f);
+            yield return InputHashRoutine(session);
             session.SettingsHash = session.Settings.ComputeHash();
-            if (settings.preset == ContentPreset.Avatar) session.Ranks = EvaluateRanks(session.Roots, session.Analysis.HasBuildTimeTools);
-            return session;
+            if (settings.preset == ContentPreset.Avatar)
+            {
+                yield return new JobProgress("Performance Rank を評価しています", 0.4f);
+                session.Ranks = EvaluateRanks(session.Roots, session.Analysis.HasBuildTimeTools);
+            }
+            done(session);
         }
 
-        /// <summary>選択・依存ファイル・コンポーネントのシリアライズ内容のハッシュ。Dry Run 後の変更検出に使う。</summary>
-        static string ComputeInputHash(AnalysisSession session)
+        /// <summary>
+        /// 選択・依存ファイル・コンポーネントのシリアライズ内容のハッシュ。Dry Run 後の変更検出に使う。
+        /// ファイルのハッシュは Unity API を使わないため別スレッドで計算する。
+        /// </summary>
+        static IEnumerator InputHashRoutine(AnalysisSession session)
         {
+            var files = session.Graph.AssetPaths.Select(p => (path: p, full: AssetPathUtility.ToFullPath(p))).ToList();
+            var hashes = new string[files.Count];
+            yield return Task.Run(() =>
+            {
+                for (int i = 0; i < files.Count; i++) hashes[i] = files[i].full != null ? HashUtility.Sha256File(files[i].full) : "unresolved";
+            });
+
             var sb = new StringBuilder();
             foreach (var t in session.Selection.Targets) sb.Append(t.globalObjectId).Append('\n');
-            foreach (var p in session.Graph.AssetPaths)
-            {
-                var full = AssetPathUtility.ToFullPath(p);
-                sb.Append(p).Append('=').Append(full != null ? HashUtility.Sha256File(full) : "unresolved").Append('\n');
-            }
+            for (int i = 0; i < files.Count; i++) sb.Append(files[i].path).Append('=').Append(hashes[i]).Append('\n');
+            int count = 0;
             foreach (var root in session.Roots)
                 foreach (var c in root.GetComponentsInChildren<Component>(true))
+                {
                     sb.Append(c == null ? "(missing)" : EditorJsonUtility.ToJson(c)).Append('\n');
-            return HashUtility.Sha256(sb.ToString());
+                    if (++count % 64 == 0) yield return null;
+                }
+            session.InputHash = HashUtility.Sha256(sb.ToString());
         }
 
         public static List<RankResult> EvaluateRanks(IList<GameObject> roots, bool buildTimeTools)
@@ -175,53 +206,79 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public static DryRunResult DryRun(AnalysisSession session, ProgressCallback progress = null)
         {
             var result = new DryRunResult { Session = session };
-            result.SnapshotBytes = SnapshotService.EstimateSize(session.Graph.AssetPaths);
             try
             {
-                CheckConversionEnabled(session);
-                result.Plans = OptimizationPlanner.Plan(CreateContext(session), Operations(session.Kind));
-                if (session.Analysis.HasBlockingIssues) return result;
-
-                using (var copy = WorkingCopy.Create(session.Roots, session.Settings.outputMode))
-                using (var gen = new GenerationContext(false, null, session.Settings, copy, result.Log, () => progress != null && progress("Dry Run", 0.5f)))
-                {
-                    foreach (var plan in result.Plans.Where(p => p.WillExecute))
-                    {
-                        if (progress != null && progress("Dry Run: " + plan.Operation.DisplayName, 0.5f)) throw new OperationCanceledException();
-                        plan.Operation.Execute(gen, plan);
-                        // 後続の処理（結合等）が対象を変える前に、その処理の結果を検証する
-                        var v = plan.Operation.Validate(gen, plan);
-                        if (!v.Passed) result.ValidationPassed = false;
-                        result.ValidationMessages.AddRange(v.Messages.Select(m => plan.Operation.Id + ": " + m));
-                    }
-
-                    result.OutputKinds.AddRange(copy.KindReasons);
-                    if (session.Settings.visualDiff) result.VisualDiff = VisualDiff.Compare(session.Roots, copy.Roots);
-                    if (session.Kind != RunKind.Optimize)
-                        result.Conversion = MobileConversionValidator.Evaluate(copy.Roots, PlatformOf(session.Kind), session.Settings.preset, result.Plans);
-
-                    var ctx = MeasurementContext.Capture("Dry Run 生成物（メモリ上）から計算");
-                    result.Predicted = MetricsCalculator.Compute(copy.Roots, ctx, gen.Textures);
-                    foreach (var m in result.Predicted.metrics)
-                        if (m.hasValue) m.method = "Dry Run: " + m.method;
-                    if (session.Settings.preset == ContentPreset.Avatar)
-                        result.Ranks = EvaluateRanks(copy.Roots, session.Analysis.HasBuildTimeTools);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                result.Error = "Dry Run はキャンセルされました。";
-            }
-            catch (OptimizerAbortException e)
-            {
-                result.Error = e.Message;
+                BackgroundJob.RunToCompletion(DryRunRoutine(session, result, progress));
             }
             catch (Exception e)
+            {
+                SetDryRunError(result, e);
+            }
+            return result;
+        }
+
+        /// <summary>Dry Run の例外を結果に反映する（同期実行・バックグラウンド実行の共通処理）。</summary>
+        public static void SetDryRunError(DryRunResult result, Exception e)
+        {
+            if (e is OperationCanceledException) result.Error = "Dry Run はキャンセルされました。";
+            else if (e is OptimizerAbortException) result.Error = e.Message;
+            else
             {
                 result.Error = "Dry Run に失敗しました: " + e.Message;
                 Debug.LogException(e);
             }
-            return result;
+        }
+
+        /// <summary>
+        /// Dry Run（予測値の算出）のコルーチン。メモリ上でだけ生成し、AssetDatabase には書き込まない。
+        /// 中断（Dispose）されるとワーキングコピーと一時オブジェクトを破棄する。
+        /// </summary>
+        public static IEnumerator DryRunRoutine(AnalysisSession session, DryRunResult result, ProgressCallback progress = null)
+        {
+            result.SnapshotBytes = SnapshotService.EstimateSize(session.Graph.AssetPaths);
+            CheckConversionEnabled(session);
+            yield return new JobProgress("処理を計画しています", 0.45f);
+            result.Plans = OptimizationPlanner.Plan(CreateContext(session), Operations(session.Kind));
+            if (session.Analysis.HasBlockingIssues) yield break;
+
+            using (var copy = WorkingCopy.Create(session.Roots, session.Settings.outputMode))
+            using (var gen = new GenerationContext(false, null, session.Settings, copy, result.Log, () => progress != null && progress("Dry Run", 0.5f)))
+            {
+                var executing = result.Plans.Where(p => p.WillExecute).ToList();
+                for (int i = 0; i < executing.Count; i++)
+                {
+                    var plan = executing[i];
+                    yield return new JobProgress("予測: " + plan.Operation.DisplayName, 0.5f + 0.35f * i / Math.Max(1, executing.Count));
+                    if (progress != null && progress("Dry Run: " + plan.Operation.DisplayName, 0.5f)) throw new OperationCanceledException();
+                    if (plan.Operation is IStepwiseOperation stepwise) yield return stepwise.ExecuteRoutine(gen, plan);
+                    else plan.Operation.Execute(gen, plan);
+                        // 後続の処理（結合等）が対象を変える前に、その処理の結果を検証する
+                        var v = plan.Operation.Validate(gen, plan);
+                        if (!v.Passed) result.ValidationPassed = false;
+                        result.ValidationMessages.AddRange(v.Messages.Select(m => plan.Operation.Id + ": " + m));
+                }
+
+                result.OutputKinds.AddRange(copy.KindReasons);
+                if (session.Settings.visualDiff)
+                {
+                    yield return new JobProgress("外観を比較しています", 0.88f);
+                    result.VisualDiff = VisualDiff.Compare(session.Roots, copy.Roots);
+                }
+                if (session.Kind != RunKind.Optimize)
+                    result.Conversion = MobileConversionValidator.Evaluate(copy.Roots, PlatformOf(session.Kind), session.Settings.preset, result.Plans);
+
+                yield return new JobProgress("予測値を計算しています", 0.93f);
+                var ctx = MeasurementContext.Capture("Dry Run 生成物（メモリ上）から計算");
+                result.Predicted = MetricsCalculator.Compute(copy.Roots, ctx, gen.Textures);
+                foreach (var m in result.Predicted.metrics)
+                    if (m.hasValue) m.method = "Dry Run: " + m.method;
+                if (session.Settings.preset == ContentPreset.Avatar)
+                {
+                    yield return new JobProgress("Performance Rank を予測しています", 0.97f);
+                    result.Ranks = EvaluateRanks(copy.Roots, session.Analysis.HasBuildTimeTools);
+                }
+            }
+            result.Completed = true;
         }
 
         static string PlanSignature(IEnumerable<OperationPlan> plans)
@@ -279,6 +336,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (fresh.InputHash != session.InputHash) throw new OptimizerAbortException("Dry Run 後に対象または依存アセットが変更されました。再度 Dry Run を行ってください。");
                 if (fresh.SettingsHash != session.SettingsHash) throw new OptimizerAbortException("Dry Run 後に設定が変更されました。再度 Dry Run を行ってください。");
                 if (fresh.Analysis.HasBlockingIssues) throw new OptimizerAbortException("実行不可の問題があります: " + string.Join(" / ", fresh.Analysis.Issues.Where(i => i.Blocking).Select(i => i.Message)));
+
+                var outputFolderError = OptimizationSettings.ValidateOutputFolder(session.Settings.prefabOutputFolder);
+                if (outputFolderError != null) throw new OptimizerAbortException(outputFolderError);
 
                 result.RunId = DateTime.UtcNow.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + "-" + HashUtility.Short(session.InputHash, 6);
                 report.runId = result.RunId;
@@ -364,6 +424,22 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (!string.IsNullOrEmpty(moveError)) throw new OptimizerAbortException("コミット（移動）に失敗しました: " + moveError);
                 foreach (var o in gen.Outputs) o.path = generatedFolder + o.path.Substring(staging.Length);
                 result.GeneratedPrefabs = prefabPaths.Select(p => generatedFolder + p.Substring(staging.Length)).ToList();
+
+                // 指定された出力先へ Prefab だけを移す（依存アセットは管理フォルダに残る。GUID は維持される）
+                var outputFolder = (session.Settings.prefabOutputFolder ?? string.Empty).Replace('\\', '/').TrimEnd('/');
+                if (outputFolder.Length > 0)
+                {
+                    AssetPathUtility.EnsureFolder(outputFolder);
+                    for (int i = 0; i < result.GeneratedPrefabs.Count; i++)
+                    {
+                        var from = result.GeneratedPrefabs[i];
+                        var to = AssetDatabase.GenerateUniqueAssetPath(outputFolder + "/" + Path.GetFileName(from));
+                        var err = AssetDatabase.MoveAsset(from, to);
+                        if (!string.IsNullOrEmpty(err)) throw new OptimizerAbortException("Prefab を出力先へ移動できません: " + err);
+                        result.GeneratedPrefabs[i] = to;
+                        foreach (var o in gen.Outputs.Where(o => o.path == from)) o.path = to;
+                    }
+                }
 
                 Step("事後計測", 0.9f);
                 var prefabRoots = result.GeneratedPrefabs.Select(AssetDatabase.LoadAssetAtPath<GameObject>).ToList();
@@ -501,6 +577,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             List<SceneState> sceneStates, string runFolder, RunLog log)
         {
             log.Error("pipeline", result.Error ?? "失敗");
+            // 出力先へ移動済みの Prefab があれば、それも破棄する
+            foreach (var p in result.GeneratedPrefabs.Where(p => runFolder == null || !AssetPathUtility.IsUnder(p, runFolder)))
+                if (AssetDatabase.LoadAssetAtPath<GameObject>(p) != null) AssetDatabase.DeleteAsset(p);
             if (runFolder != null && !RestoreService.DiscardRun(runFolder, out var discardError))
                 log.Error("rollback", discardError);
             else if (runFolder != null)

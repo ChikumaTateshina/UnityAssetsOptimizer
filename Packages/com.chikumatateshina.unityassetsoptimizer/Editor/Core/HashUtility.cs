@@ -24,20 +24,23 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public static string Sha256(string text) => Sha256(Encoding.UTF8.GetBytes(text ?? string.Empty));
 
-        /// <summary>ファイル内容の SHA256。サイズと更新日時が同じ間はキャッシュを使う。</summary>
+        /// <summary>ファイル内容の SHA256。サイズと更新日時が同じ間はキャッシュを使う（別スレッドから呼んでよい）。</summary>
         public static string Sha256File(string fullPath, bool useCache = true)
         {
             var info = new FileInfo(fullPath);
             if (!info.Exists) return null;
-            if (useCache && FileCache.TryGetValue(fullPath, out var cached) &&
-                cached.Length == info.Length && cached.WriteTimeUtc == info.LastWriteTimeUtc)
-                return cached.Hash;
+            lock (FileCache)
+            {
+                if (useCache && FileCache.TryGetValue(fullPath, out var cached) &&
+                    cached.Length == info.Length && cached.WriteTimeUtc == info.LastWriteTimeUtc)
+                    return cached.Hash;
+            }
 
             string hash;
             using (var sha = SHA256.Create())
             using (var stream = File.OpenRead(fullPath))
                 hash = ToHex(sha.ComputeHash(stream));
-            FileCache[fullPath] = new CacheEntry { Length = info.Length, WriteTimeUtc = info.LastWriteTimeUtc, Hash = hash };
+            lock (FileCache) FileCache[fullPath] = new CacheEntry { Length = info.Length, WriteTimeUtc = info.LastWriteTimeUtc, Hash = hash };
             return hash;
         }
 

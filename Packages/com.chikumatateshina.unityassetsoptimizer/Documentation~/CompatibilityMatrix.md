@@ -3,13 +3,13 @@
 実装仕様書 §16 に基づき、対象 Unity / VRChat SDK / 外部パッケージの公開 API・仕様の検証状況を記録する。
 **「未検証」の項目は実装済みとして扱わず、該当機能は無効（取得不可/変換不可/スキップ）とする。**
 
-最終更新: 2026-11-07（v0.3.0）
+最終更新: 2026-11-07（v0.5.0）
 
 ## 検証環境
 
 | 項目 | 版 | 確認方法 |
 |---|---|---|
-| Unity | 2022.3.31f1 | Unity DLL に対するコンパイル、EditMode テスト（SDK なし / SDK あり の2構成） |
+| Unity | 2022.3.22f1（VRChat 推奨）/ 2022.3.31f1 | Unity DLL に対するコンパイル、EditMode テスト（SDK なし / SDK・NDMF・lilToon・Poiyomi あり の2構成） |
 | VRChat SDK Base / Avatars | 3.9.0 | パッケージのソースと公開クラスを確認し、SDK 入りプロジェクトで EditMode テスト |
 | NDMF | 1.9.4 | `Plugin<T>` / `BuildPhase.Optimizing` / `Sequence.Run` / `INDMFEditorOnly` のソースを確認し、`AvatarProcessor.ProcessAvatar` でテスト |
 | lilToon | 2.3.1 | `Shader/lts*.shader` と `Includes/lil_common_frag.hlsl` でテクスチャの UV を確認し、テスト |

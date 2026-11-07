@@ -1,6 +1,8 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Rendering;
 using Object = UnityEngine.Object;
@@ -11,7 +13,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// テクスチャアトラス化 + Material 統合 + サブメッシュ統合。
     /// 対応 Shader Adapter・単位 ST・UV0 が [0,1] 内・読み取り可能なテクスチャの組み合わせのみを処理する。
     /// </summary>
-    public sealed class TextureAtlasOperation : OptimizationOperationBase
+    public sealed class TextureAtlasOperation : OptimizationOperationBase, IStepwiseOperation
     {
         const float UvEpsilon = 1e-4f;
 
@@ -316,7 +318,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             context.PlannedGeneratedTextureCount += data.Groups.Sum(g => g.Channels.Count);
         }
 
-        public override void Execute(GenerationContext gen, OperationPlan plan)
+        public override void Execute(GenerationContext gen, OperationPlan plan) =>
+            BackgroundJob.RunToCompletion(ExecuteRoutine(gen, plan));
+
+        public IEnumerator ExecuteRoutine(GenerationContext gen, OperationPlan plan)
         {
             var data = (AtlasPlanData)plan.Data;
             var pixelCache = new Dictionary<Texture2D, (Color32[] px, int w, int h)>();
@@ -324,21 +329,23 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             foreach (var group in data.Groups)
             {
                 gen.ThrowIfCancelled();
-                BuildAtlas(gen, group, pixelCache);
+                yield return BuildAtlas(gen, group, pixelCache);
             }
             pixelCache.Clear();
 
             var meshCache = new Dictionary<string, Mesh>();
+            int count = 0;
             foreach (var key in data.ProcessedRendererKeys)
             {
                 gen.ThrowIfCancelled();
                 var clone = gen.Copy.FindRenderer(key);
                 if (clone == null) throw new InvalidOperationException("ワーキングコピー上の Renderer が見つかりません: " + key);
                 ApplyToRenderer(gen, clone, data.Assignments[key], meshCache, key);
+                if (++count % 4 == 0) yield return null;
             }
         }
 
-        void BuildAtlas(GenerationContext gen, AtlasGroup group, Dictionary<Texture2D, (Color32[] px, int w, int h)> cache)
+        IEnumerator BuildAtlas(GenerationContext gen, AtlasGroup group, Dictionary<Texture2D, (Color32[] px, int w, int h)> cache)
         {
             var pack = group.Pack;
             var first = group.Materials[0];
@@ -356,13 +363,17 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         var pixels = TextureReader.ReadPixels(src, out int w, out int h);
                         px = (pixels, w, h);
                         cache[src.Texture] = px;
+                        yield return null;
                     }
                     if (!hasAlpha) hasAlpha = px.px.Any(c => c.a < 255);
                     sources.Add(new AtlasComposer.Source { Pixels = px.px, Width = px.w, Height = px.h, Destination = pack.Rects[i] });
                 }
 
                 var fill = channel.Kind == AtlasChannelKind.Normal ? new Color32(128, 128, 255, 255) : new Color32(0, 0, 0, 0);
-                var composed = AtlasComposer.Compose(pack.Width, pack.Height, sources, gen.Settings.atlasPadding, fill);
+                // ピクセルの合成は Unity API を使わないため別スレッドで行う
+                Color32[] composed = null;
+                int padding = gen.Settings.atlasPadding;
+                yield return Task.Run(() => composed = AtlasComposer.Compose(pack.Width, pack.Height, sources, padding, fill));
                 var refInfo = group.Sources[first][channel.Property];
                 var tex = new Texture2D(pack.Width, pack.Height, TextureFormat.RGBA32, false, !refInfo.SRgb)
                 {

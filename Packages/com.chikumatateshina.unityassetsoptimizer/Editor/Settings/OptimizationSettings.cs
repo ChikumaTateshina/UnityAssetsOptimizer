@@ -47,6 +47,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         [Header("Output / Validation")]
         public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
+        /// <summary>生成 Prefab の出力先（Assets 配下）。空なら実行フォルダ内。依存アセットとスナップショットは常に管理フォルダに置く。</summary>
+        public string prefabOutputFolder = string.Empty;
         /// <summary>隔離プレビューで前後をレンダリングし、画像差分を参考値として記録する。</summary>
         public bool visualDiff = true;
 
@@ -112,6 +114,22 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public OptimizationSettings Clone() => JsonUtility.FromJson<OptimizationSettings>(JsonUtility.ToJson(this));
 
-        public string ComputeHash() => HashUtility.Sha256(JsonUtility.ToJson(this));
+        /// <summary>処理内容に影響する設定のハッシュ（出力先は処理内容に影響しないため含めない）。</summary>
+        public string ComputeHash()
+        {
+            var copy = Clone();
+            copy.prefabOutputFolder = string.Empty;
+            return HashUtility.Sha256(JsonUtility.ToJson(copy));
+        }
+
+        /// <summary>出力先フォルダが使えない理由。使えるなら null。</summary>
+        public static string ValidateOutputFolder(string folder)
+        {
+            if (string.IsNullOrEmpty(folder)) return null;
+            folder = folder.Replace('\\', '/').TrimEnd('/');
+            if (folder != "Assets" && !folder.StartsWith("Assets/", StringComparison.Ordinal)) return "出力先は Assets フォルダ内を指定してください: " + folder;
+            if (folder.Contains("~") || folder.Contains("..")) return "出力先に使えない文字が含まれています: " + folder;
+            return null;
+        }
     }
 }

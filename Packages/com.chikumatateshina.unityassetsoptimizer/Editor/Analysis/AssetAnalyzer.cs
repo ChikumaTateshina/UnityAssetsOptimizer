@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
@@ -48,6 +49,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public readonly HashSet<string> AnimatedBindingPaths = new HashSet<string>();
         /// <summary>任意の MonoBehaviour から参照される GameObject/Component の Transform。</summary>
         public readonly HashSet<Transform> ReferencedTransforms = new HashSet<Transform>();
+        /// <summary>
+        /// 実際に使われている AnimationClip（Animator / Animation / 各コンポーネントが参照するコントローラー・クリップ）。
+        /// FBX に内蔵されているだけで使われていないクリップは含めない。
+        /// </summary>
+        public readonly HashSet<AnimationClip> UsedAnimationClips = new HashSet<AnimationClip>();
 
         /// <summary>
         /// t またはその祖先（root まで）がアニメーションのバインディング対象になり得るか。
@@ -104,6 +110,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public static AnalysisReport Analyze(DependencyGraph graph)
         {
+            AnalysisReport result = null;
+            BackgroundJob.RunToCompletion(AnalyzeRoutine(graph, r => result = r));
+            return result;
+        }
+
+        public static IEnumerator AnalyzeRoutine(DependencyGraph graph, Action<AnalysisReport> done)
+        {
             var report = new AnalysisReport { Graph = graph };
 
             if (EditorApplication.isPlayingOrWillChangePlaymode)
@@ -117,9 +130,31 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 report.Issues.Add(new AnalysisIssue { Source = "Scene", Message = "未保存シーン '" + scene + "' のオブジェクトです。シーンファイルのスナップショットは取得できません（シーン自体は変更しません）。" });
 
             CollectRenderers(report);
-            ScanComponents(report);
+            yield return null;
+            yield return ScanComponents(report);
+            CollectUsedClips(report);
+            yield return null;
             ScanAnimations(report);
-            return report;
+            done(report);
+        }
+
+        static void AddController(AnalysisReport report, RuntimeAnimatorController controller)
+        {
+            if (controller == null) return;
+            foreach (var clip in controller.animationClips)
+                if (clip != null) report.UsedAnimationClips.Add(clip);
+        }
+
+        static void CollectUsedClips(AnalysisReport report)
+        {
+            foreach (var root in report.Graph.Roots)
+            {
+                foreach (var animator in root.GetComponentsInChildren<Animator>(true))
+                    AddController(report, animator.runtimeAnimatorController);
+                foreach (var animation in root.GetComponentsInChildren<Animation>(true))
+                    foreach (var clip in AnimationUtility.GetAnimationClips(animation.gameObject))
+                        if (clip != null) report.UsedAnimationClips.Add(clip);
+            }
         }
 
         static void CollectRenderers(AnalysisReport report)
@@ -154,8 +189,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
         }
 
-        static void ScanComponents(AnalysisReport report)
+        static IEnumerator ScanComponents(AnalysisReport report)
         {
+            int count = 0;
             var rendererLookup = report.Renderers.ToDictionary(i => i.Renderer);
             foreach (var root in report.Graph.Roots)
             {
@@ -177,6 +213,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var mb in root.GetComponentsInChildren<MonoBehaviour>(true))
                 {
                     if (mb == null) continue;
+                    if (++count % 16 == 0) yield return null;
                     var typeName = mb.GetType().FullName ?? string.Empty;
                     if (typeName == AvatarDescriptorType) report.HasAvatarDescriptor = true;
                     if (BuildTimeToolNamespaces.Any(ns => typeName.StartsWith(ns, StringComparison.Ordinal))) report.HasBuildTimeTools = true;
@@ -208,6 +245,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 if (prop.propertyType != SerializedPropertyType.ObjectReference) continue;
                 var value = prop.objectReferenceValue;
+                // コンポーネント（VRCAvatarDescriptor の Playable Layer、Modular Avatar 等）が使うアニメーション
+                if (value is RuntimeAnimatorController controller) AddController(report, controller);
+                else if (value is AnimationClip clip) report.UsedAnimationClips.Add(clip);
                 Transform t = value is GameObject g ? g.transform : value is Component c ? c.transform : null;
                 if (t == null || EditorUtility.IsPersistent(t) || prop.propertyPath == "m_GameObject") continue;
                 report.ReferencedTransforms.Add(t);
@@ -235,13 +275,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         }
 
         /// <summary>
-        /// 依存に含まれる AnimationClip から、マテリアルプロパティ/マテリアル差し替えを行うバインディングを検出する。
+        /// 使われている AnimationClip から、マテリアルプロパティ/マテリアル差し替えを行うバインディングを検出する。
         /// パスの解決は保守的に行い、末尾一致した Renderer をすべて対象とする。
         /// </summary>
         static void ScanAnimations(AnalysisReport report)
         {
             var bindingPaths = new HashSet<string>();
-            foreach (var clip in report.Graph.DependencyObjects.OfType<AnimationClip>())
+            foreach (var clip in report.UsedAnimationClips)
             {
                 foreach (var b in AnimationUtility.GetCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);
                 foreach (var b in AnimationUtility.GetObjectReferenceCurveBindings(clip)) report.AnimatedBindingPaths.Add(b.path);

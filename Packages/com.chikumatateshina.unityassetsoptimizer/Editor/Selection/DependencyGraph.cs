@@ -1,7 +1,10 @@
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEditor;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace ChikumaTateshina.UnityAssetsOptimizer
 {
@@ -32,6 +35,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public static DependencyGraph Build(IList<GameObject> roots)
         {
+            DependencyGraph result = null;
+            BackgroundJob.RunToCompletion(BuildRoutine(roots, g => result = g));
+            return result;
+        }
+
+        /// <summary>依存グラフを作るコルーチン。コンポーネントの走査は一定数ごとに区切る。</summary>
+        public static IEnumerator BuildRoutine(IList<GameObject> roots, Action<DependencyGraph> done)
+        {
             var graph = new DependencyGraph(roots.ToList());
             var deps = EditorUtility.CollectDependencies(roots.Cast<Object>().ToArray());
             foreach (var obj in deps)
@@ -51,12 +62,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 else graph.AssetPaths.Add(root.scene.path);
             }
 
-            graph.CollectExternalReferences();
-            return graph;
+            yield return null;
+            yield return graph.CollectExternalReferences();
+            done(graph);
         }
 
-        void CollectExternalReferences()
+        IEnumerator CollectExternalReferences()
         {
+            int count = 0;
             var inside = new HashSet<Transform>();
             foreach (var root in Roots)
                 foreach (var t in root.GetComponentsInChildren<Transform>(true)) inside.Add(t);
@@ -66,6 +79,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var component in root.GetComponentsInChildren<Component>(true))
                 {
                     if (component == null || component is Transform) continue;
+                    if (++count % 32 == 0) yield return null;
                     var so = new SerializedObject(component);
                     var prop = so.GetIterator();
                     while (prop.Next(true))

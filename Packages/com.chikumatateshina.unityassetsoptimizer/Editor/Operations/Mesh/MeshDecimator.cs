@@ -1,5 +1,7 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Linq;
 using Unity.Collections;
 using UnityEngine;
@@ -31,9 +33,42 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             public int U, V, StampU, StampV;
         }
 
+        /// <summary>簡略化の入力と結果。Run は Unity API を使わないため別スレッドで実行できる。</summary>
+        public sealed class Job
+        {
+            internal int VertexCount;
+            internal int SubMeshCount;
+            internal List<Vector3> Positions;
+            internal List<int> Tris;
+            internal List<int> TriSub;
+            internal Bounds Bounds;
+            internal float Ratio;
+            internal float MaxErrorRelative;
+            internal List<int>[] PerSub;
+            internal long SourceTriangles;
+            internal long ResultTriangles;
+            internal double MaxApplied;
+            internal double Limit;
+        }
+
         public static DecimationResult Decimate(Mesh src, float ratio, float maxErrorRelative)
         {
-            int vc = src.vertexCount;
+            var job = Prepare(src, ratio, maxErrorRelative);
+            Run(job);
+            return Complete(src, job);
+        }
+
+        /// <summary>計算部分を別スレッドで実行するコルーチン。</summary>
+        public static IEnumerator DecimateRoutine(Mesh src, float ratio, float maxErrorRelative, Action<DecimationResult> done)
+        {
+            var job = Prepare(src, ratio, maxErrorRelative);
+            yield return Task.Run(() => Run(job));
+            done(Complete(src, job));
+        }
+
+        /// <summary>メッシュからデータを読み出す（メインスレッド）。</summary>
+        public static Job Prepare(Mesh src, float ratio, float maxErrorRelative)
+        {
             var positions = new List<Vector3>();
             src.GetVertices(positions);
             var tris = new List<int>();
@@ -45,6 +80,41 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 tris.AddRange(t);
                 for (int i = 0; i < t.Length / 3; i++) triSub.Add(s);
             }
+            return new Job
+            {
+                VertexCount = src.vertexCount,
+                SubMeshCount = src.subMeshCount,
+                Positions = positions,
+                Tris = tris,
+                TriSub = triSub,
+                Bounds = src.bounds,
+                Ratio = ratio,
+                MaxErrorRelative = maxErrorRelative,
+            };
+        }
+
+        /// <summary>結果のメッシュを作る（メインスレッド）。</summary>
+        public static DecimationResult Complete(Mesh src, Job job)
+        {
+            return new DecimationResult
+            {
+                Mesh = BuildSubset(src, job.PerSub, src.name + "_reduced"),
+                SourceTriangles = job.SourceTriangles,
+                ResultTriangles = job.ResultTriangles,
+                MaxError = Math.Sqrt(job.MaxApplied),
+                ErrorLimit = job.Limit,
+            };
+        }
+
+        /// <summary>簡略化の計算本体。Unity API を使わない。</summary>
+        public static void Run(Job job)
+        {
+            int vc = job.VertexCount;
+            var positions = job.Positions;
+            var tris = job.Tris;
+            var triSub = job.TriSub;
+            float ratio = job.Ratio;
+            float maxErrorRelative = job.MaxErrorRelative;
             int triCount = tris.Count / 3;
             var alive = Enumerable.Repeat(true, triCount).ToArray();
             var vertexTris = new List<int>[vc];
@@ -87,7 +157,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 for (int k = 0; k < 3; k++) AddPlane(q, tris[t * 3 + k], plane, area);
             }
 
-            var bounds = src.bounds;
+            var bounds = job.Bounds;
             double limit = maxErrorRelative * bounds.size.magnitude;
             double limitSq = limit * limit;
             var stamp = new int[vc];
@@ -148,19 +218,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var n in Neighbors(e.V, vertexTris, tris, alive)) PushEdges(n);
             }
 
-            var perSub = new List<int>[src.subMeshCount];
+            var perSub = new List<int>[job.SubMeshCount];
             for (int s = 0; s < perSub.Length; s++) perSub[s] = new List<int>();
             for (int t = 0; t < triCount; t++)
                 if (alive[t]) perSub[triSub[t]].AddRange(new[] { tris[t * 3], tris[t * 3 + 1], tris[t * 3 + 2] });
 
-            return new DecimationResult
-            {
-                Mesh = BuildSubset(src, perSub, src.name + "_reduced"),
-                SourceTriangles = triCount,
-                ResultTriangles = current,
-                MaxError = Math.Sqrt(maxApplied),
-                ErrorLimit = limit,
-            };
+            job.PerSub = perSub;
+            job.SourceTriangles = triCount;
+            job.ResultTriangles = current;
+            job.MaxApplied = maxApplied;
+            job.Limit = limit;
         }
 
         static long EdgeKey(int a, int b) => a < b ? ((long)a << 32) | (uint)b : ((long)b << 32) | (uint)a;

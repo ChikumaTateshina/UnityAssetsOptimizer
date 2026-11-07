@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -33,7 +34,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     }
 
     /// <summary>ポリゴン削減（Phase 4）。誤差が許容値を超える縮約は行わず、削減効果が小さければ不採用。</summary>
-    public sealed class PolygonReductionOperation : OptimizationOperationBase
+    public sealed class PolygonReductionOperation : OptimizationOperationBase, IStepwiseOperation
     {
         public override string Id => FeatureIds.PolygonReduction;
 
@@ -59,7 +60,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return analysis;
         }
 
-        public override void Execute(GenerationContext gen, OperationPlan plan)
+        public override void Execute(GenerationContext gen, OperationPlan plan) =>
+            BackgroundJob.RunToCompletion(ExecuteRoutine(gen, plan));
+
+        public IEnumerator ExecuteRoutine(GenerationContext gen, OperationPlan plan)
         {
             var included = new HashSet<string>(plan.Items.Where(i => i.included).Select(i => i.target));
             var cache = new Dictionary<Mesh, Mesh>();
@@ -73,7 +77,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (mesh == null) continue;
                 if (!cache.TryGetValue(mesh, out var reduced))
                 {
-                    var result = MeshDecimator.Decimate(mesh, gen.Settings.polygonReductionRatio, gen.Settings.decimationMaxError);
+                    DecimationResult result = null;
+                    yield return MeshDecimator.DecimateRoutine(mesh, gen.Settings.polygonReductionRatio, gen.Settings.decimationMaxError, x => result = x);
                     if (result.ResultTriangles > result.SourceTriangles * 0.95)
                     {
                         Object.DestroyImmediate(result.Mesh);
@@ -102,7 +107,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// LOD 生成（Phase 4, MeshRenderer のみ）。対象オブジェクトに LODGroup を追加し、
     /// 子 GameObject として簡略化メッシュの Renderer を作る。元の Renderer は LOD0 として残す。
     /// </summary>
-    public sealed class LodGenerationOperation : OptimizationOperationBase
+    public sealed class LodGenerationOperation : OptimizationOperationBase, IStepwiseOperation
     {
         public override string Id => FeatureIds.LodGeneration;
 
@@ -132,7 +137,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return analysis;
         }
 
-        public override void Execute(GenerationContext gen, OperationPlan plan)
+        public override void Execute(GenerationContext gen, OperationPlan plan) =>
+            BackgroundJob.RunToCompletion(ExecuteRoutine(gen, plan));
+
+        public IEnumerator ExecuteRoutine(GenerationContext gen, OperationPlan plan)
         {
             var included = new HashSet<string>(plan.Items.Where(i => i.included).Select(i => i.target));
             var ratios = gen.Settings.lodRatios ?? new float[0];
@@ -151,7 +159,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 int rootIndex = gen.Copy.RootIndexOf(r.transform);
                 for (int i = 0; i < ratios.Length; i++)
                 {
-                    var result = MeshDecimator.Decimate(mesh, ratios[i], gen.Settings.decimationMaxError * (i + 1));
+                    DecimationResult result = null;
+                    yield return MeshDecimator.DecimateRoutine(mesh, ratios[i], gen.Settings.decimationMaxError * (i + 1), x => result = x);
                     if (result.ResultTriangles > result.SourceTriangles * 0.95)
                     {
                         Object.DestroyImmediate(result.Mesh);
@@ -183,7 +192,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     }
 
     /// <summary>Collider 簡略化（World, Phase 4）。非 Convex の MeshCollider のメッシュを簡略化したコピーに置き換える。</summary>
-    public sealed class ColliderSimplifyOperation : OptimizationOperationBase
+    public sealed class ColliderSimplifyOperation : OptimizationOperationBase, IStepwiseOperation
     {
         public override string Id => FeatureIds.ColliderSimplify;
 
@@ -215,7 +224,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return analysis;
         }
 
-        public override void Execute(GenerationContext gen, OperationPlan plan)
+        public override void Execute(GenerationContext gen, OperationPlan plan) =>
+            BackgroundJob.RunToCompletion(ExecuteRoutine(gen, plan));
+
+        public IEnumerator ExecuteRoutine(GenerationContext gen, OperationPlan plan)
         {
             var included = new HashSet<string>(plan.Items.Where(i => i.included).Select(i => i.target));
             var cache = new Dictionary<Mesh, Mesh>();
@@ -226,7 +238,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     if (!included.Contains(label.Length == 0 ? "(root)" : label) || col.sharedMesh == null) continue;
                     if (!cache.TryGetValue(col.sharedMesh, out var reduced))
                     {
-                        var result = MeshDecimator.Decimate(col.sharedMesh, gen.Settings.polygonReductionRatio, gen.Settings.decimationMaxError);
+                        DecimationResult result = null;
+                        yield return MeshDecimator.DecimateRoutine(col.sharedMesh, gen.Settings.polygonReductionRatio, gen.Settings.decimationMaxError, x => result = x);
                         if (result.ResultTriangles > result.SourceTriangles * 0.95)
                         {
                             Object.DestroyImmediate(result.Mesh);

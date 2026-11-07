@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -91,6 +92,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         /// <summary>隔離されたワーキングコピーに対して生成を行う。</summary>
         void Execute(GenerationContext generation, OperationPlan plan);
         ValidationResult Validate(GenerationContext generation, OperationPlan plan);
+    }
+
+    /// <summary>
+    /// 生成処理を区切りながら進められる Operation。バックグラウンドの Dry Run ではこちらが使われ、
+    /// エディタの操作を妨げない（Execute は同じ処理を最後まで同期実行する）。
+    /// </summary>
+    public interface IStepwiseOperation
+    {
+        IEnumerator ExecuteRoutine(GenerationContext generation, OperationPlan plan);
     }
 
     public abstract class OptimizationOperationBase : IOptimizationOperation

@@ -86,9 +86,20 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return result;
         }
 
-        /// <summary>読み込み中のシーンから生成物への参照を探す（手動配置の検出）。</summary>
-        public static List<string> FindSceneReferences(string runFolder)
+        /// <summary>実行フォルダの外（指定された出力先）に置いた生成物。GUID が記録と一致するものだけを返す。</summary>
+        public static List<string> ExternalOutputs(RunManifest manifest, string runFolder)
         {
+            if (manifest == null) return new List<string>();
+            return manifest.outputs
+                .Where(o => !AssetPathUtility.IsUnder(o.path, runFolder) && AssetPathUtility.IsUnder(o.path, "Assets"))
+                .Where(o => !string.IsNullOrEmpty(o.guid) && AssetDatabase.GUIDToAssetPath(o.guid) == o.path)
+                .Select(o => o.path).ToList();
+        }
+
+        /// <summary>読み込み中のシーンから生成物への参照を探す（手動配置の検出）。</summary>
+        public static List<string> FindSceneReferences(string runFolder, RunManifest manifest = null)
+        {
+            var external = new HashSet<string>(ExternalOutputs(manifest, runFolder));
             var refs = new List<string>();
             for (int i = 0; i < SceneManager.sceneCount; i++)
             {
@@ -101,15 +112,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     {
                         if (d == null || !EditorUtility.IsPersistent(d)) continue;
                         var p = AssetDatabase.GetAssetPath(d);
-                        if (AssetPathUtility.IsUnder(p, runFolder)) refs.Add(scene.path + ":" + root.name + " → " + p);
+                        if (AssetPathUtility.IsUnder(p, runFolder) || external.Contains(p)) refs.Add(scene.path + ":" + root.name + " → " + p);
                     }
                 }
             }
             return refs.Distinct().ToList();
         }
 
-        /// <summary>生成物（とその実行のスナップショット）を削除する。原本には触れない。</summary>
-        public static bool DiscardRun(string runFolder, out string error)
+        /// <summary>
+        /// 生成物（とその実行のスナップショット）を削除する。原本には触れない。
+        /// manifest を渡すと、出力先フォルダへ移した Prefab（GUID が一致するもの）も削除する。
+        /// </summary>
+        public static bool DiscardRun(string runFolder, out string error, RunManifest manifest = null)
         {
             error = null;
             if (!AssetPathUtility.IsUnder(runFolder, UnityAssetsOptimizerInfo.GeneratedRoot) || runFolder == UnityAssetsOptimizerInfo.GeneratedRoot)
@@ -117,6 +131,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 error = "管理領域外のフォルダは削除しません: " + runFolder;
                 return false;
             }
+            foreach (var p in ExternalOutputs(manifest, runFolder)) AssetDatabase.DeleteAsset(p);
             if (AssetDatabase.IsValidFolder(runFolder) && !AssetDatabase.DeleteAsset(runFolder))
             {
                 error = "削除に失敗しました: " + runFolder;

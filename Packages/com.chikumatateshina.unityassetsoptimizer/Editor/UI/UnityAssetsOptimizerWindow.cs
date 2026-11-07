@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -32,6 +33,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         readonly Dictionary<string, List<RestoreCheckEntry>> _restoreChecks = new Dictionary<string, List<RestoreCheckEntry>>();
         readonly HashSet<string> _expandedPlans = new HashSet<string>();
         IOptimizationOperation[] _operations;
+        AnalysisSession _mobileSession;
+
+        // ---- 解析・予測の自動実行（バックグラウンド）
+        const double RestartDelaySeconds = 0.6;
+        static int _changeCounter;
+        BackgroundJob _job;
+        RunKind _jobKind;
+        string _jobFingerprint;
+        string _pendingFingerprint;
+        double _pendingSince;
+        string _jobError;
+        readonly Dictionary<RunKind, string> _completedFingerprint = new Dictionary<RunKind, string>();
 
         [MenuItem(UnityAssetsOptimizerInfo.MenuRoot + "Open", false, 0)]
         public static void Open()
@@ -46,11 +59,33 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         {
             _operations = OperationRegistry.CreateAll();
             LoadSettings();
+            ObjectChangeEvents.changesPublished += OnObjectChanges;
+            EditorApplication.projectChanged += OnAnyChange;
+            Undo.undoRedoPerformed += OnAnyChange;
+            EditorApplication.playModeStateChanged += OnPlayModeChanged;
         }
+
+        void OnDisable()
+        {
+            ObjectChangeEvents.changesPublished -= OnObjectChanges;
+            EditorApplication.projectChanged -= OnAnyChange;
+            Undo.undoRedoPerformed -= OnAnyChange;
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            CancelJob();
+        }
+
+        // Undo/SerializedObject を通した変更とアセットの変更を検知する（裏で行う Dry Run 自身はこれらを発生させない）
+        static void OnObjectChanges(ref ObjectChangeEventStream stream) => _changeCounter++;
+        static void OnAnyChange() => _changeCounter++;
+
+        void OnPlayModeChanged(PlayModeStateChange change) => CancelJob();
+
+        /// <summary>設定はプロジェクトごとに保存する。</summary>
+        static string ProjectSettingsKey => SettingsPrefKey + "." + HashUtility.Short(HashUtility.Sha256(Application.dataPath), 8);
 
         void LoadSettings()
         {
-            var json = EditorPrefs.GetString(SettingsPrefKey, string.Empty);
+            var json = EditorPrefs.GetString(ProjectSettingsKey, string.Empty);
             if (!string.IsNullOrEmpty(json))
             {
                 try { _settings = JsonUtility.FromJson<OptimizationSettings>(json); }
@@ -59,7 +94,126 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             if (_settings == null || _settings.features.Count == 0) _settings = OptimizationSettings.CreateDefault(ContentPreset.World);
         }
 
-        void SaveSettings() => EditorPrefs.SetString(SettingsPrefKey, JsonUtility.ToJson(_settings));
+        void SaveSettings() => EditorPrefs.SetString(ProjectSettingsKey, JsonUtility.ToJson(_settings));
+
+        RunKind AutoKind => _tab == 2 ? (_mobilePlatform == 0 ? RunKind.Android : RunKind.iOS) : RunKind.Optimize;
+
+        string Fingerprint(RunKind kind) =>
+            kind + "|" + string.Join(",", _targets.Where(t => t != null).Select(t => t.GetInstanceID())) + "|" + _settings.ComputeHash() + "|" + _changeCounter;
+
+        bool IsUpToDate(RunKind kind) => _completedFingerprint.TryGetValue(kind, out var fp) && fp == Fingerprint(kind) && (_job == null || !_job.IsRunning);
+
+        bool CanAutoRun(RunKind kind)
+        {
+            if (_targets.All(t => t == null) || EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling) return false;
+            if (kind == RunKind.Optimize) return true;
+            var platform = kind == RunKind.iOS ? VrcPlatform.iOS : VrcPlatform.Android;
+            return CapabilityDatabase.IsConversionEnabled(platform, _settings.preset, out _);
+        }
+
+        /// <summary>変更が落ち着いたら（RestartDelaySeconds 経過後）解析と予測を裏で実行する。</summary>
+        void OnInspectorUpdate()
+        {
+            if (_settings == null) return;
+            var kind = AutoKind;
+            var fp = Fingerprint(kind);
+            if (_job != null && _job.IsRunning)
+            {
+                if (_jobFingerprint != fp) CancelJob();
+                else
+                {
+                    Repaint();
+                    return;
+                }
+            }
+            if (!CanAutoRun(kind)) return;
+            if (_completedFingerprint.TryGetValue(kind, out var done) && done == fp) return;
+            if (_pendingFingerprint != fp)
+            {
+                _pendingFingerprint = fp;
+                _pendingSince = EditorApplication.timeSinceStartup;
+                Repaint();
+                return;
+            }
+            if (EditorApplication.timeSinceStartup - _pendingSince >= RestartDelaySeconds) StartJob(kind, fp);
+        }
+
+        void StartJob(RunKind kind, string fingerprint)
+        {
+            CancelJob();
+            var targets = _targets.Where(t => t != null).ToList();
+            var settings = _settings.Clone();
+            AnalysisSession session = null;
+            var dry = new DryRunResult();
+
+            IEnumerator Routine()
+            {
+                yield return OptimizerPipeline.AnalyzeRoutine(targets, settings, kind, x => session = x);
+                dry.Session = session;
+                yield return OptimizerPipeline.DryRunRoutine(session, dry);
+            }
+
+            _jobKind = kind;
+            _jobFingerprint = fingerprint;
+            _jobError = null;
+            _job = new BackgroundJob(kind == RunKind.Optimize ? "解析と予測" : kind + " の予測", Routine());
+            _job.Finished += job =>
+            {
+                if (job.IsCancelled) return;
+                if (session == null)
+                {
+                    _jobError = "解析に失敗しました: " + job.Error?.Message;
+                    if (job.Error != null) Debug.LogException(job.Error);
+                }
+                else
+                {
+                    if (job.Error != null) OptimizerPipeline.SetDryRunError(dry, job.Error);
+                    if (kind == RunKind.Optimize)
+                    {
+                        _session = session;
+                        _dryRun = dry;
+                    }
+                    else
+                    {
+                        _mobileSession = session;
+                        _mobileDryRun = dry;
+                    }
+                }
+                _completedFingerprint[kind] = fingerprint;
+                Repaint();
+            };
+            _job.Start();
+        }
+
+        void CancelJob()
+        {
+            if (_job != null && _job.IsRunning) _job.Cancel();
+            _job = null;
+        }
+
+        /// <summary>解析・予測の状態表示。処理はエディタの操作を妨げずに裏で進む。</summary>
+        void DrawAutoStatus(RunKind kind)
+        {
+            if (_targets.All(t => t == null)) return;
+            if (_job != null && _job.IsRunning && _jobKind == kind)
+            {
+                var rect = EditorGUILayout.GetControlRect(false, 18);
+                EditorGUI.ProgressBar(rect, _job.Progress, "裏で実行中: " + _job.Stage);
+            }
+            else if (IsUpToDate(kind))
+            {
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("解析と予測は最新です（変更すると自動で再計算します）", EditorStyles.miniLabel);
+                    if (GUILayout.Button("再計算", EditorStyles.miniButton, GUILayout.Width(60))) _completedFingerprint.Remove(kind);
+                }
+            }
+            else if (CanAutoRun(kind))
+            {
+                EditorGUILayout.LabelField("変更を検出しました。まもなく解析と予測を実行します…", EditorStyles.miniLabel);
+            }
+            if (_jobError != null) EditorGUILayout.HelpBox(_jobError, MessageType.Error);
+        }
 
         void OnGUI()
         {
@@ -137,20 +291,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 var op = _operations.FirstOrDefault(o => o.Id == def.Id);
                 bool implemented = op != null && op.Capabilities.Implemented;
+                if (!implemented) continue; // 未実装の機能は表示しない
                 bool applicable = _settings.IsApplicable(def.Id);
                 using (new EditorGUILayout.HorizontalScope())
                 {
-                    var label = new GUIContent(def.Label + (_settings.IsUserModified(def.Id) ? " *" : string.Empty), def.Note + "（Phase " + def.Phase + "）");
+                    var label = new GUIContent(def.Label + (_settings.IsUserModified(def.Id) ? " *" : string.Empty), def.Note);
                     EditorGUILayout.LabelField(label, GUILayout.Width(190));
                     if (!applicable)
                     {
                         EditorGUILayout.LabelField("対象外", EditorStyles.miniLabel);
-                    }
-                    else if (!implemented)
-                    {
-                        var reason = op is UnimplementedOperation u ? u.Reason : "未実装";
-                        using (new EditorGUI.DisabledScope(true))
-                            EditorGUILayout.LabelField(new GUIContent("実行しません（理由はツールチップ）", reason), EditorStyles.miniLabel);
                     }
                     else
                     {
@@ -195,8 +344,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         void SettingsChanged()
         {
+            // 前回の結果は再計算が終わるまで表示したままにする（実行ボタンは最新になるまで無効）
             SaveSettings();
-            _dryRun = null;
         }
 
         void Invalidate()
@@ -207,70 +356,58 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         void DrawActions()
         {
-            EditorGUILayout.LabelField("3. 解析 → Dry Run → 実行", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField("3. 出力と実行", EditorStyles.boldLabel);
+            DrawOutputFolder();
+            DrawAutoStatus(RunKind.Optimize);
+            bool ready = _dryRun != null && IsUpToDate(RunKind.Optimize) && _dryRun.CanExecute;
+            using (new EditorGUI.DisabledScope(!ready))
+            {
+                if (GUILayout.Button("最適化を実行", GUILayout.Height(30))) RunExecute();
+            }
+        }
+
+        void DrawOutputFolder()
+        {
             using (new EditorGUILayout.HorizontalScope())
             {
-                using (new EditorGUI.DisabledScope(_targets.Count == 0 || EditorApplication.isPlayingOrWillChangePlaymode))
+                EditorGUI.BeginChangeCheck();
+                var folder = EditorGUILayout.TextField(new GUIContent("Prefab の出力先", "空欄なら " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/ 内。Mesh・Material・Texture 等の依存アセットとスナップショットは常に " + UnityAssetsOptimizerInfo.GeneratedRoot + " に置きます"), _settings.prefabOutputFolder);
+                if (GUILayout.Button("選択…", GUILayout.Width(56)))
                 {
-                    if (GUILayout.Button("解析（現在値）", GUILayout.Height(28))) RunAnalyze();
+                    var picked = EditorUtility.OpenFolderPanel("Prefab の出力先", Application.dataPath, string.Empty);
+                    if (!string.IsNullOrEmpty(picked))
+                    {
+                        var root = UnityAssetsOptimizerInfo.ProjectRoot.Replace('\\', '/');
+                        picked = picked.Replace('\\', '/');
+                        folder = picked.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase) ? picked.Substring(root.Length + 1) : picked;
+                        GUI.changed = true;
+                    }
                 }
-                using (new EditorGUI.DisabledScope(_session == null))
+                if (GUILayout.Button("既定", GUILayout.Width(44)))
                 {
-                    if (GUILayout.Button("Dry Run（予測値）", GUILayout.Height(28))) RunDryRun();
+                    folder = string.Empty;
+                    GUI.changed = true;
                 }
-                bool stale = _dryRun != null && _dryRun.Session.SettingsHash != _settings.ComputeHash();
-                using (new EditorGUI.DisabledScope(_dryRun == null || stale || !_dryRun.CanExecute))
+                if (EditorGUI.EndChangeCheck())
                 {
-                    if (GUILayout.Button("最適化を実行", GUILayout.Height(28))) RunExecute();
+                    _settings.prefabOutputFolder = folder;
+                    SaveSettings();
                 }
             }
-            if (_dryRun != null && _dryRun.Session.SettingsHash != _settings.ComputeHash())
-                EditorGUILayout.HelpBox("Dry Run 後に設定が変更されました。Dry Run を再実行してください。", MessageType.Warning);
+            var error = OptimizationSettings.ValidateOutputFolder(_settings.prefabOutputFolder);
+            if (error != null) EditorGUILayout.HelpBox(error, MessageType.Error);
         }
 
-        void RunAnalyze()
-        {
-            try
-            {
-                EditorUtility.DisplayProgressBar("UnityAssetsOptimizer", "解析中...", 0.3f);
-                _session = OptimizerPipeline.Analyze(_targets.Where(t => t != null), _settings);
-                _dryRun = null;
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e);
-                EditorUtility.DisplayDialog("解析エラー", e.Message, "OK");
-            }
-            finally
-            {
-                EditorUtility.ClearProgressBar();
-            }
-        }
-
-        void RunDryRun()
-        {
-            try
-            {
-                // 現在の設定で解析し直してから Dry Run する（設定ハッシュを一致させる）
-                _session = OptimizerPipeline.Analyze(_targets.Where(t => t != null), _settings);
-                _dryRun = OptimizerPipeline.DryRun(_session, (m, p) => EditorUtility.DisplayCancelableProgressBar("UnityAssetsOptimizer", m, p));
-            }
-            catch (Exception e)
-            {
-                Debug.LogException(e);
-                EditorUtility.DisplayDialog("Dry Run エラー", e.Message, "OK");
-            }
-            finally
-            {
-                EditorUtility.ClearProgressBar();
-            }
-        }
+        static string OutputDescription(OptimizationSettings settings) =>
+            string.IsNullOrEmpty(settings.prefabOutputFolder)
+                ? UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/"
+                : settings.prefabOutputFolder + "/（依存アセットは " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/）";
 
         void RunExecute()
         {
             var executing = _dryRun.Plans.Where(p => p.WillExecute).ToList();
             var message =
-                "生成先: " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/\n" +
+                "Prefab の出力先: " + OutputDescription(_settings) + "\n" +
                 "原本スナップショット: " + Metric.FormatNumber(_dryRun.SnapshotBytes, "bytes") + "（" + _dryRun.Session.Graph.AssetPaths.Count + " ファイル）\n" +
                 "実行する処理: " + string.Join(", ", executing.Select(p => p.Operation.DisplayName + "(" + p.Decision.mode.Label() + ")")) + "\n" +
                 "スキップ項目: " + _dryRun.Plans.Sum(p => p.Items.Count(i => !i.included)) + " 件\n\n" +
@@ -292,6 +429,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         /// <summary>FORCE の個別承認を取得して実行する。承認が拒否された場合は null。</summary>
         RunResult ExecuteWithApprovals(DryRunResult dryRun)
         {
+            if (OptimizationSettings.ValidateOutputFolder(_settings.prefabOutputFolder) != null) return null;
+            CancelJob();
+            dryRun.Session.Settings.prefabOutputFolder = _settings.prefabOutputFolder;
             var approvals = new List<ForceApproval>();
             foreach (var plan in dryRun.ForcePlans)
             {
@@ -329,8 +469,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         void DrawAnalysisResults()
         {
-            if (_session == null) return;
-            EditorGUILayout.LabelField("4. 解析結果", EditorStyles.boldLabel);
+            if (_session == null || _targets.All(t => t == null)) return;
+            EditorGUILayout.LabelField("4. 解析と予測の結果", EditorStyles.boldLabel);
+            if (!IsUpToDate(RunKind.Optimize)) EditorGUILayout.LabelField("（前回の結果を表示しています。再計算が終わると更新されます）", EditorStyles.miniLabel);
             foreach (var issue in _session.Analysis.Issues)
                 EditorGUILayout.HelpBox(issue.Source + ": " + issue.Message, issue.Blocking ? MessageType.Error : MessageType.Warning);
 
@@ -422,7 +563,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
             if (_session == null || _session.Ranks.Count == 0)
             {
-                EditorGUILayout.HelpBox("「最適化」タブで解析を実行してください。", MessageType.Info);
+                EditorGUILayout.HelpBox("「最適化」タブで対象を取り込むと、自動で解析されます。", MessageType.Info);
                 return;
             }
             _rankPlatform = GUILayout.Toolbar(_rankPlatform, new[] { "PC", "Android", "iOS" });
@@ -493,32 +634,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 {
                     _settings.mobileShaderMode = mode;
                     SettingsChanged();
-                    _mobileDryRun = null;
                 }
             }
 
-            using (new EditorGUILayout.HorizontalScope())
+            if (!enabled) return;
+            DrawOutputFolder();
+            DrawAutoStatus(kind);
+            bool ready = _mobileDryRun != null && _mobileDryRun.Session.Kind == kind && IsUpToDate(kind) && _mobileDryRun.CanExecute;
+            using (new EditorGUI.DisabledScope(!ready))
             {
-                using (new EditorGUI.DisabledScope(!enabled || _targets.Count == 0))
-                {
-                    if (GUILayout.Button("Dry Run（" + platform + "）", GUILayout.Height(28)))
-                    {
-                        try
-                        {
-                            var session = OptimizerPipeline.Analyze(_targets.Where(t => t != null), _settings, kind);
-                            _mobileDryRun = OptimizerPipeline.DryRun(session, (m, p) => EditorUtility.DisplayCancelableProgressBar("UnityAssetsOptimizer", m, p));
-                        }
-                        finally
-                        {
-                            EditorUtility.ClearProgressBar();
-                        }
-                    }
-                }
-                bool stale = _mobileDryRun != null && (_mobileDryRun.Session.SettingsHash != _settings.ComputeHash() || _mobileDryRun.Session.Kind != kind);
-                using (new EditorGUI.DisabledScope(_mobileDryRun == null || stale || !_mobileDryRun.CanExecute))
-                {
-                    if (GUILayout.Button(platform + " 派生版を生成", GUILayout.Height(28))) _mobileRun = ExecuteWithApprovals(_mobileDryRun);
-                }
+                if (GUILayout.Button(platform + " 派生版を生成", GUILayout.Height(30))) _mobileRun = ExecuteWithApprovals(_mobileDryRun);
             }
 
             if (_mobileDryRun != null && _mobileDryRun.Session.Kind == kind)
@@ -601,14 +726,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         void Discard(RunRecord run)
         {
-            var refs = RestoreService.FindSceneReferences(run.RunFolder);
+            var refs = RestoreService.FindSceneReferences(run.RunFolder, run.Manifest);
             var checks = RestoreService.CheckOriginals(run.Manifest);
             var changed = checks.Where(c => c.State != OriginalState.Unchanged).ToList();
             var msg = "生成物とこの実行のスナップショットを削除します。原本には触れません。";
             if (refs.Count > 0) msg += "\n\n⚠ 読み込み中のシーンが生成物を参照しています（削除すると Missing になります）:\n" + string.Join("\n", refs.Take(10));
             if (changed.Count > 0) msg += "\n\n⚠ 原本が処理後に変更されています。削除するとスナップショットからの復元ができなくなります（" + changed.Count + " 件）。";
             if (!EditorUtility.DisplayDialog("生成物の破棄", msg, "破棄", "キャンセル")) return;
-            if (!RestoreService.DiscardRun(run.RunFolder, out var error)) EditorUtility.DisplayDialog("破棄に失敗", error, "OK");
+            if (!RestoreService.DiscardRun(run.RunFolder, out var error, run.Manifest)) EditorUtility.DisplayDialog("破棄に失敗", error, "OK");
             _restoreChecks.Remove(run.RunFolder);
             _runs = null;
         }
@@ -628,6 +753,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
             foreach (var key in MetricKeys.Ordered)
             {
+                // 算出していない指標（フレーム時間）は表示しない
+                if (key == MetricKeys.CpuTime || key == MetricKeys.GpuTime) continue;
                 var b = before?.Get(key);
                 var p = predicted?.Get(key);
                 var a = after?.Get(key);
@@ -642,7 +769,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     GUILayout.Label(cmp != null && cmp.hasPredictionError ? (cmp.predictionError * 100).ToString("+0.0;-0.0;0.0", CultureInfo.InvariantCulture) + "%" : "—");
                 }
             }
-            EditorGUILayout.LabelField("区分: 確定計算 / 推定 / 実測 / 取得不可。マウスオーバーで算出方法・算出不可の理由を表示します。", EditorStyles.wordWrappedMiniLabel);
+            EditorGUILayout.LabelField("区分: 確定計算 / 推定 / 取得不可。マウスオーバーで算出方法・算出不可の理由を表示します。", EditorStyles.wordWrappedMiniLabel);
         }
 
         static GUIContent Cell(Metric m)
