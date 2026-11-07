@@ -33,12 +33,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             return root;
         }
 
-        static OptimizationSettings Settings(PrefabOutputMode mode)
+        static OptimizationSettings Settings(PrefabOutputMode mode, EmptyObjectHandling handling = EmptyObjectHandling.Delete)
         {
             var s = TestAssets.Only(ContentPreset.World, FeatureIds.MeshCombine);
             s.outputMode = mode;
+            s.emptyObjectHandling = handling;
             return s;
         }
+
+        static string[] Hidden(GameObject go) =>
+            go.GetComponentsInChildren<Transform>(true).Where(t => !t.gameObject.activeSelf && t.CompareTag(EmptyObjectCleaner.EditorOnlyTag)).Select(t => t.name).ToArray();
 
         static string[] Names(GameObject go) => go.GetComponentsInChildren<Transform>(true).Select(t => t.name).ToArray();
 
@@ -58,15 +62,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
         public void NothingIsRemovedWhenDisabled()
         {
             var root = Grouped(_a.Material("M", "Standard", null));
-            var settings = Settings(PrefabOutputMode.Unpacked);
-            settings.removeEmptyObjects = false;
-            var result = _a.Run(new[] { root }, settings);
+            var result = _a.Run(new[] { root }, Settings(PrefabOutputMode.Unpacked, EmptyObjectHandling.Keep));
             Assert.IsTrue(result.Success, result.Error);
             Assert.AreEqual(8, Names(AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0])).Length);
         }
 
         [Test]
-        public void VariantOutputKeepsObjects()
+        public void VariantOutputHidesInsteadOfDeleting()
         {
             var src = PrefabUtility.SaveAsPrefabAsset(Grouped(_a.Material("M", "Standard", null)), TestAssets.Folder + "/Grouped.prefab");
             var result = _a.Run(new[] { src }, Settings(PrefabOutputMode.VariantWhenPossible));
@@ -74,7 +76,23 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             var generated = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
             Assert.AreEqual(PrefabAssetType.Variant, PrefabUtility.GetPrefabAssetType(generated));
             Assert.AreEqual(8, Names(generated).Length);
-            Assert.IsTrue(result.Report.log.entries.Any(e => e.message.Contains("Variant")), "explains why nothing was removed");
+            CollectionAssert.AreEquivalent(new[] { "B", "G2" }, Hidden(generated), "top-level emptied objects are hidden and EditorOnly");
+            Assert.IsTrue(result.Report.log.entries.Any(e => e.message.Contains("Variant")), "explains why nothing was deleted");
+        }
+
+        [Test]
+        public void DefaultHidesEmptiedObjectsAsEditorOnly()
+        {
+            var root = Grouped(_a.Material("M", "Standard", null));
+            var settings = TestAssets.Only(ContentPreset.World, FeatureIds.MeshCombine);
+            Assert.AreEqual(EmptyObjectHandling.HideEditorOnly, settings.emptyObjectHandling);
+            var result = _a.Run(new[] { root }, settings);
+            Assert.IsTrue(result.Success, result.Error);
+            var generated = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
+            Assert.AreEqual(8, Names(generated).Length);
+            CollectionAssert.AreEquivalent(new[] { "B", "G2" }, Hidden(generated));
+            Assert.IsTrue(generated.transform.Find("Empty").gameObject.activeSelf, "originally empty objects are untouched");
+            Assert.IsTrue(root.GetComponentsInChildren<Transform>(true).All(t => t.gameObject.activeSelf && t.CompareTag("Untagged")), "original unchanged");
         }
     }
 

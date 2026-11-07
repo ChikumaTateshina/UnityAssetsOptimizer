@@ -46,20 +46,45 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
         public void PackIsDeterministicAndNonOverlapping()
         {
             var sizes = new List<Vector2Int> { new Vector2Int(256, 256), new Vector2Int(512, 128), new Vector2Int(128, 512), new Vector2Int(64, 64) };
-            var a = AtlasPacker.Pack(sizes, 4, 2048);
-            var b = AtlasPacker.Pack(sizes, 4, 2048);
+            const int padding = 4;
+            var a = AtlasPacker.Pack(sizes, padding, 2048);
+            var b = AtlasPacker.Pack(sizes, padding, 2048);
 
             Assert.AreEqual(a.Width, b.Width);
-            Assert.AreEqual(a.Height, b.Height);
+            Assert.AreEqual(a.Height, a.Width, "square canvas");
             CollectionAssert.AreEqual(a.Rects, b.Rects);
-            Assert.AreEqual(1f, a.Scale);
+            Assert.GreaterOrEqual(a.Scale, 1f, "never shrinks when it fits");
             for (int i = 0; i < a.Rects.Length; i++)
             {
                 var r = a.Rects[i];
-                Assert.AreEqual(sizes[i], r.size);
-                Assert.IsTrue(r.xMin >= 0 && r.yMin >= 0 && r.xMax <= a.Width && r.yMax <= a.Height);
-                for (int j = i + 1; j < a.Rects.Length; j++) Assert.IsFalse(r.Overlaps(a.Rects[j]), "rects overlap");
+                Assert.GreaterOrEqual(r.width, sizes[i].x, "no loss of resolution");
+                Assert.GreaterOrEqual(r.height, sizes[i].y);
+                Assert.IsTrue(r.xMin >= padding && r.yMin >= padding && r.xMax <= a.Width - padding && r.yMax <= a.Height - padding);
+                var padded = new RectInt(r.x - padding, r.y - padding, r.width + padding * 2, r.height + padding * 2);
+                for (int j = i + 1; j < a.Rects.Length; j++)
+                {
+                    var o = a.Rects[j];
+                    Assert.IsFalse(padded.Overlaps(new RectInt(o.x - padding, o.y - padding, o.width + padding * 2, o.height + padding * 2)), "rects overlap (including padding)");
+                }
             }
+        }
+
+        [Test]
+        public void PackFillsMostOfTheSquare()
+        {
+            // 以前は 2048x2048 の半分以上が空いていた構成
+            var sizes = new List<Vector2Int> { new Vector2Int(1024, 1024), new Vector2Int(1024, 1024), new Vector2Int(1024, 1024), new Vector2Int(512, 512), new Vector2Int(256, 256) };
+            var r = AtlasPacker.Pack(sizes, 8, 4096);
+            Assert.AreEqual(4096, r.Width);
+            Assert.GreaterOrEqual(r.FillRatio, 0.9f, "fill " + r.FillRatio);
+        }
+
+        [Test]
+        public void PackChoosesSmallestSquareWithoutShrinking()
+        {
+            var r = AtlasPacker.Pack(new List<Vector2Int> { new Vector2Int(512, 512), new Vector2Int(512, 512) }, 0, 4096);
+            Assert.AreEqual(1024, r.Width, "1024 fits both at native size");
+            Assert.GreaterOrEqual(r.FillRatio, 0.99f);
         }
 
         [Test]

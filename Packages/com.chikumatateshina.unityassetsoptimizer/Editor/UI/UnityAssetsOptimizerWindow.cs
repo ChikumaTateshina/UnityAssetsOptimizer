@@ -341,16 +341,17 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     }
                     if (!skinned && _settings.preset == ContentPreset.Avatar)
                         EditorGUILayout.LabelField("アバターでは SkinnedMesh が対象外のため、ほとんど結合されません。", EditorStyles.wordWrappedMiniLabel);
-                    bool removeEmpty = EditorGUILayout.ToggleLeft(new GUIContent("空になった GameObject を削除する",
-                        "結合で Renderer がなくなり Transform だけになった GameObject を削除します。出力形式が Unpacked（独立 Prefab）の場合と NDMF のビルド時のみ" +
-                        "（Prefab Variant では元の子オブジェクトを削除できません）。ほかから参照されているもの・アニメーション対象は残します"), _settings.removeEmptyObjects);
-                    if (removeEmpty != _settings.removeEmptyObjects)
+                    var emptyHandling = (EmptyObjectHandling)EditorGUILayout.Popup(new GUIContent("空になった GameObject",
+                        "結合で Renderer がなくなり Transform だけになった GameObject の扱い。非表示 + EditorOnly はビルドに含まれません（Prefab Variant でも可）。" +
+                        "削除は出力形式が Unpacked（独立 Prefab）の場合のみで、Variant では非表示 + EditorOnly になります。ほかから参照されているもの・アニメーション対象・元から空のものはそのまま"),
+                        (int)_settings.emptyObjectHandling, new[] { new GUIContent("そのまま残す"), new GUIContent("非表示 + EditorOnly"), new GUIContent("削除") });
+                    if (emptyHandling != _settings.emptyObjectHandling)
                     {
-                        _settings.removeEmptyObjects = removeEmpty;
+                        _settings.emptyObjectHandling = emptyHandling;
                         SettingsChanged();
                     }
-                    if (removeEmpty && _settings.outputMode == PrefabOutputMode.VariantWhenPossible)
-                        EditorGUILayout.LabelField("出力形式が VariantWhenPossible のため、Variant として出力される対象では削除されません（詳細パラメータの「出力形式」を Unpacked に）。", EditorStyles.wordWrappedMiniLabel);
+                    if (emptyHandling == EmptyObjectHandling.Delete && _settings.outputMode == PrefabOutputMode.VariantWhenPossible)
+                        EditorGUILayout.LabelField("出力形式が VariantWhenPossible のため、Variant として出力される対象では削除せず非表示 + EditorOnly にします（削除するには詳細パラメータの「出力形式」を Unpacked に）。", EditorStyles.wordWrappedMiniLabel);
                     EditorGUI.indentLevel--;
                 }
             }

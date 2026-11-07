@@ -54,7 +54,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     public static class MaterialEquivalence
     {
         public static string Key(Material m, bool textureContentBased, bool includeNonTextureValues = true, bool includeTextures = true,
-            ICollection<string> excludeProperties = null)
+            ICollection<string> excludeProperties = null, ICollection<string> excludeKeywords = null, bool includeGlobalIllumination = true)
         {
             if (m == null) return "null";
             var shader = m.shader;
@@ -64,10 +64,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             AssetDatabase.TryGetGUIDAndLocalFileIdentifier(shader, out string sguid, out long slocal);
             sb.Append("shader=").Append(shader.name).Append('|').Append(sguid).Append(':').Append(slocal).Append('\n');
             sb.Append("queue=").Append(m.renderQueue).Append('\n');
-            sb.Append("keywords=").Append(string.Join(",", m.shaderKeywords.OrderBy(k => k, StringComparer.Ordinal))).Append('\n');
+            sb.Append("keywords=").Append(string.Join(",", m.shaderKeywords.Where(k => excludeKeywords == null || !excludeKeywords.Contains(k))
+                .OrderBy(k => k, StringComparer.Ordinal))).Append('\n');
             sb.Append("instancing=").Append(m.enableInstancing).Append('\n');
             sb.Append("dsgi=").Append(m.doubleSidedGI).Append('\n');
-            sb.Append("gi=").Append((int)m.globalIlluminationFlags).Append('\n');
+            if (includeGlobalIllumination) sb.Append("gi=").Append((int)m.globalIlluminationFlags).Append('\n');
             sb.Append("rendertype=").Append(m.GetTag("RenderType", false)).Append('\n');
             for (int p = 0; p < m.passCount; p++)
             {

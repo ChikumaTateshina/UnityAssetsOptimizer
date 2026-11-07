@@ -15,6 +15,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public AtlasChannelKind Kind;
         /// <summary>このテクスチャが設定されている場合のみ評価する前提条件（UV チャンネル選択・パン等）。</summary>
         public PropertyRule[] Rules;
+        /// <summary>
+        /// 一部の Material にだけテクスチャがある場合に、ない Material の領域をシェーダーの既定テクスチャ（未割り当て時と同じ値）で埋めて統合できるか。
+        /// テクスチャの有無でシェーダーキーワードの処理が切り替わる（既定テクスチャと同じ結果にならない）ものは false。
+        /// </summary>
+        public bool Fillable = true;
+        /// <summary>テクスチャがある Material に付くキーワード（統合時、どれかにテクスチャがあればアトラス Material で有効にする）。</summary>
+        public string KeywordWhenPresent;
 
         public AtlasChannel(string property, AtlasChannelKind kind, params PropertyRule[] rules)
         {
@@ -22,6 +29,55 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             Kind = kind;
             Rules = rules ?? new PropertyRule[0];
         }
+
+        public AtlasChannel NotFillable()
+        {
+            Fillable = false;
+            return this;
+        }
+
+        public AtlasChannel WithKeyword(string keyword)
+        {
+            KeywordWhenPresent = keyword;
+            return this;
+        }
+    }
+
+    /// <summary>
+    /// 数値プロパティのテクスチャへの焼き込み（例: Standard の Metallic/Smoothness → _MetallicGlossMap）。
+    /// テクスチャのない Material は数値から作った単色、ある Material はアルファに倍率を掛けた画像にして、アトラス Material ではテクスチャを使う設定にする。
+    /// </summary>
+    public sealed class ParameterBakeSpec
+    {
+        public string Texture;
+        /// <summary>焼き込める Material か（例: Smoothness の取得元がこのテクスチャであること）。</summary>
+        public Func<Material, bool> Applicable;
+        /// <summary>テクスチャがない場合の値（そのままテクスチャに書く値）。</summary>
+        public Func<Material, Color> SolidValue;
+        /// <summary>テクスチャがある場合にアルファへ掛ける倍率。</summary>
+        public Func<Material, float> AlphaScale;
+        public bool SRgb;
+        public string[] ExcludeProperties = new string[0];
+        public string[] ExcludeKeywords = new string[0];
+        public Action<Material> Apply;
+    }
+
+    /// <summary>
+    /// 発光の焼き込み: 発光 = Texture × ColorProperty（HDR 可）。無効な Material は黒（アルファ 0）として扱う。
+    /// HDR の強さはアトラス Material の色（白 × 最大強度）に移し、各領域にはそれで割った色を焼き込む。
+    /// </summary>
+    public sealed class EmissionBakeSpec
+    {
+        public string Texture;
+        public string ColorProperty;
+        public Func<Material, bool> Enabled;
+        /// <summary>焼き込むため等価性判定から外すプロパティ・キーワード。</summary>
+        public string[] ExcludeProperties = new string[0];
+        public string[] ExcludeKeywords = new string[0];
+        /// <summary>Global Illumination フラグ（発光の有無で変わる）を等価性判定から外す。</summary>
+        public bool ExcludeGlobalIllumination;
+        /// <summary>アトラス Material で発光を有効にし、色を設定する（reference は発光が有効だった Material）。</summary>
+        public Action<Material, Color, Material> Apply;
     }
 
     /// <summary>プロパティ値の前提条件（満たさない場合はアトラス化しない）。</summary>
@@ -85,6 +141,12 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         string MainColorTexture { get; }
         /// <summary>メインカラーを焼き込めない理由（シェーダー固有の条件）。焼き込めるなら null。</summary>
         string ColorBakeBlocker(Material material);
+        /// <summary>発光の焼き込み（対応しない場合は null）。</summary>
+        EmissionBakeSpec EmissionBake { get; }
+        /// <summary>数値プロパティの焼き込み。</summary>
+        IReadOnlyList<ParameterBakeSpec> ParameterBakes { get; }
+        /// <summary>メインテクスチャのアルファが描画に使われない Material か（すべてそうならアトラスを不透明にして圧縮を軽くする）。</summary>
+        bool MainAlphaUnused(Material material);
     }
 
     public sealed class DataShaderAdapter : IShaderAdapter
@@ -102,11 +164,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public IReadOnlyList<PropertyRule> Rules { get; }
         public string MainColorProperty { get; }
         public string MainColorTexture { get; }
+        public EmissionBakeSpec EmissionBake { get; }
+        public IReadOnlyList<ParameterBakeSpec> ParameterBakes { get; }
+        readonly Func<Material, bool> _mainAlphaUnused;
 
         public DataShaderAdapter(string id, int version, string verifiedAgainst, Func<Shader, bool> matches, AtlasChannel[] channels,
             string[] shared = null, string[] forbidden = null, PropertyRule[] rules = null, Func<Material, HashSet<VertexAttribute>> attributes = null,
-            string mainColor = null, string mainColorTexture = "_MainTex", Func<Material, string> colorBakeBlocker = null)
+            string mainColor = null, string mainColorTexture = "_MainTex", Func<Material, string> colorBakeBlocker = null, EmissionBakeSpec emissionBake = null,
+            ParameterBakeSpec[] parameterBakes = null, Func<Material, bool> mainAlphaUnused = null)
         {
+            EmissionBake = emissionBake;
+            ParameterBakes = parameterBakes ?? new ParameterBakeSpec[0];
+            _mainAlphaUnused = mainAlphaUnused;
             MainColorProperty = mainColor;
             MainColorTexture = mainColorTexture;
             _colorBakeBlocker = colorBakeBlocker;
@@ -124,6 +193,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public bool Matches(Shader shader) => shader != null && _matches(shader);
         public HashSet<VertexAttribute> UsedAttributes(Material material) => _attributes?.Invoke(material);
         public string ColorBakeBlocker(Material material) => _colorBakeBlocker?.Invoke(material);
+        public bool MainAlphaUnused(Material material) => _mainAlphaUnused != null && _mainAlphaUnused(material);
     }
 
     /// <summary>
@@ -148,32 +218,38 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         static readonly List<IShaderAdapter> Adapters = new List<IShaderAdapter>
         {
-            new DataShaderAdapter("unity.standard", 2, "Unity 2022.3 Built-in Standard", s => s.name == "Standard", new[]
+            // Standard: _METALLICGLOSSMAP / _PARALLAXMAP / _DETAIL_MULX2 はテクスチャの有無で数値プロパティとの切り替えが起きるため埋められない。
+            // _NORMALMAP は平らなノーマル、_OcclusionMap は白（未割り当て時の既定値）で埋めても結果が同じ
+            new DataShaderAdapter("unity.standard", 3, "Unity 2022.3 Built-in Standard", s => s.name == "Standard", new[]
             {
                 new AtlasChannel("_MainTex", AtlasChannelKind.Color),
-                new AtlasChannel("_MetallicGlossMap", AtlasChannelKind.Data),
-                new AtlasChannel("_BumpMap", AtlasChannelKind.Normal),
-                new AtlasChannel("_ParallaxMap", AtlasChannelKind.Data),
+                new AtlasChannel("_MetallicGlossMap", AtlasChannelKind.Data).NotFillable(),
+                new AtlasChannel("_BumpMap", AtlasChannelKind.Normal).WithKeyword("_NORMALMAP"),
+                new AtlasChannel("_ParallaxMap", AtlasChannelKind.Data).NotFillable(),
                 new AtlasChannel("_OcclusionMap", AtlasChannelKind.Data),
                 new AtlasChannel("_EmissionMap", AtlasChannelKind.Color),
-                new AtlasChannel("_DetailMask", AtlasChannelKind.Data),
+                new AtlasChannel("_DetailMask", AtlasChannelKind.Data).NotFillable(),
             }, forbidden: new[] { "_DetailAlbedoMap", "_DetailNormalMap" },
                 attributes: m => Attrs(VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent,
                     VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2),
-                mainColor: "_Color"),
-            new DataShaderAdapter("unity.standard-specular", 2, "Unity 2022.3 Built-in Standard (Specular setup)", s => s.name == "Standard (Specular setup)", new[]
+                mainColor: "_Color", emissionBake: StandardEmission(),
+                parameterBakes: new[] { StandardGlossBake("_MetallicGlossMap", "_METALLICGLOSSMAP", m => { var v = m.GetFloat("_Metallic"); return new Color(v, v, v, m.GetFloat("_Glossiness")); }, true, "_Metallic") },
+                mainAlphaUnused: StandardOpaqueAlphaUnused),
+            new DataShaderAdapter("unity.standard-specular", 3, "Unity 2022.3 Built-in Standard (Specular setup)", s => s.name == "Standard (Specular setup)", new[]
             {
                 new AtlasChannel("_MainTex", AtlasChannelKind.Color),
-                new AtlasChannel("_SpecGlossMap", AtlasChannelKind.Data),
-                new AtlasChannel("_BumpMap", AtlasChannelKind.Normal),
-                new AtlasChannel("_ParallaxMap", AtlasChannelKind.Data),
+                new AtlasChannel("_SpecGlossMap", AtlasChannelKind.Data).NotFillable(),
+                new AtlasChannel("_BumpMap", AtlasChannelKind.Normal).WithKeyword("_NORMALMAP"),
+                new AtlasChannel("_ParallaxMap", AtlasChannelKind.Data).NotFillable(),
                 new AtlasChannel("_OcclusionMap", AtlasChannelKind.Data),
                 new AtlasChannel("_EmissionMap", AtlasChannelKind.Color),
-                new AtlasChannel("_DetailMask", AtlasChannelKind.Data),
+                new AtlasChannel("_DetailMask", AtlasChannelKind.Data).NotFillable(),
             }, forbidden: new[] { "_DetailAlbedoMap", "_DetailNormalMap" },
                 attributes: m => Attrs(VertexAttribute.Position, VertexAttribute.Normal, VertexAttribute.Tangent,
                     VertexAttribute.TexCoord0, VertexAttribute.TexCoord1, VertexAttribute.TexCoord2),
-                mainColor: "_Color"),
+                mainColor: "_Color", emissionBake: StandardEmission(),
+                parameterBakes: new[] { StandardGlossBake("_SpecGlossMap", "_SPECGLOSSMAP", m => { var c = m.GetColor("_SpecColor"); return new Color(c.r, c.g, c.b, m.GetFloat("_Glossiness")); }, true, "_SpecColor") },
+                mainAlphaUnused: StandardOpaqueAlphaUnused),
             MainTexOnly("unity.unlit-texture", "Unlit/Texture", false),
             MainTexOnly("unity.unlit-transparent", "Unlit/Transparent", false),
             MainTexOnly("unity.unlit-transparent-cutout", "Unlit/Transparent Cutout", false),
@@ -186,6 +262,49 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public static IReadOnlyList<IShaderAdapter> All => Adapters;
 
         public static IShaderAdapter Find(Shader shader) => Adapters.FirstOrDefault(a => a.Matches(shader));
+
+        /// <summary>Standard: _EMISSION キーワードが有効なら 発光 = _EmissionMap（既定は白）× _EmissionColor（HDR）。</summary>
+        static EmissionBakeSpec StandardEmission() => new EmissionBakeSpec
+        {
+            Texture = "_EmissionMap",
+            ColorProperty = "_EmissionColor",
+            Enabled = m => m.IsKeywordEnabled("_EMISSION"),
+            ExcludeProperties = new[] { "_EmissionColor" },
+            ExcludeKeywords = new[] { "_EMISSION" },
+            ExcludeGlobalIllumination = true,
+            Apply = (atlas, color, reference) =>
+            {
+                atlas.EnableKeyword("_EMISSION");
+                atlas.SetColor("_EmissionColor", color);
+                atlas.globalIlluminationFlags = reference.globalIlluminationFlags;
+            },
+        };
+
+        /// <summary>
+        /// _Metallic は [Gamma]、_SpecColor は色のため、数値から作る単色はガンマ空間の値（sRGB テクスチャと同じ扱い）として書く。
+        /// Standard（UnityStandardInput.cginc の MetallicGloss / SpecularGloss）: キーワードがあれば 値 = map.rgb、Smoothness = map.a × _GlossMapScale、
+        /// なければ数値（_Metallic または _SpecColor と _Glossiness）。Smoothness の取得元がこのテクスチャ（_SmoothnessTextureChannel = 0）の場合のみ焼き込む。
+        /// </summary>
+        static ParameterBakeSpec StandardGlossBake(string texture, string keyword, Func<Material, Color> solid, bool srgb, string valueProperty) => new ParameterBakeSpec
+        {
+            Texture = texture,
+            Applicable = m => !m.HasProperty("_SmoothnessTextureChannel") || m.GetFloat("_SmoothnessTextureChannel") < 0.5f,
+            SolidValue = solid,
+            AlphaScale = m => m.HasProperty("_GlossMapScale") ? m.GetFloat("_GlossMapScale") : 1f,
+            SRgb = srgb,
+            ExcludeProperties = new[] { valueProperty, "_Glossiness", "_GlossMapScale" },
+            ExcludeKeywords = new[] { keyword },
+            Apply = atlas =>
+            {
+                atlas.EnableKeyword(keyword);
+                atlas.SetFloat("_GlossMapScale", 1f);
+            },
+        };
+
+        /// <summary>Standard の Opaque で Smoothness をアルファから取らない場合、メインテクスチャのアルファは使われない。</summary>
+        static bool StandardOpaqueAlphaUnused(Material m) =>
+            m.HasProperty("_Mode") && m.GetFloat("_Mode") < 0.5f && !m.IsKeywordEnabled("_SMOOTHNESS_TEXTURE_ALBEDO_CHANNEL_A") &&
+            !m.IsKeywordEnabled("_ALPHATEST_ON") && !m.IsKeywordEnabled("_ALPHABLEND_ON") && !m.IsKeywordEnabled("_ALPHAPREMULTIPLY_ON");
 
         static IShaderAdapter MainTexOnly(string id, string shaderName, bool lit, string mainColor = null) =>
             new DataShaderAdapter(id, 2, "Unity 2022.3 Built-in " + shaderName, s => s.name == shaderName,
@@ -204,7 +323,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         static IShaderAdapter LilToon()
         {
             var names = new HashSet<string>(LilToonShaderNames);
-            return new DataShaderAdapter("liltoon", 1, "lilToon 2.3.1", s => names.Contains(s.name), new[]
+            return new DataShaderAdapter("liltoon", 2, "lilToon 2.3.1", s => names.Contains(s.name), new[]
             {
                 new AtlasChannel("_MainTex", AtlasChannelKind.Color),
                 new AtlasChannel("_BaseMap", AtlasChannelKind.Color),
@@ -275,6 +394,20 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (m.HasProperty("_MainTexHSVG") && m.GetVector("_MainTexHSVG") != new Vector4(0, 1, 1, 1)) return "メインの色調補正（HSVG）が有効";
                 if (m.HasProperty("_MainGradationStrength") && !Mathf.Approximately(m.GetFloat("_MainGradationStrength"), 0)) return "グラデーションマップが有効";
                 return null;
+            },
+            // lilToon の発光は _UseEmission が有効なら _EmissionColor × _EmissionMap（既定は白）を発光マスク等と合成する。
+            // 色とテクスチャの積を焼き込み、無効な Material は透明な黒（合成に寄与しない）にする
+            emissionBake: new EmissionBakeSpec
+            {
+                Texture = "_EmissionMap",
+                ColorProperty = "_EmissionColor",
+                Enabled = m => m.HasProperty("_UseEmission") && m.GetFloat("_UseEmission") > 0.5f,
+                ExcludeProperties = new[] { "_EmissionColor", "_UseEmission" },
+                Apply = (atlas, color, reference) =>
+                {
+                    atlas.SetFloat("_UseEmission", 1);
+                    atlas.SetColor("_EmissionColor", color);
+                },
             });
         }
 
@@ -301,7 +434,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (stoch != null) rules.Add(PropertyRule.Equals(stoch, 0, prop + " の Stochastic サンプリングが有効"));
                 if (prop.StartsWith("_EmissionMap", StringComparison.Ordinal))
                     rules.Add(PropertyRule.Equals("_EmissionCenterOutEnabled" + prop.Substring("_EmissionMap".Length), 0, prop + " の Center Out が有効（UV 非依存）"));
-                return new AtlasChannel(prop, kind, rules.ToArray());
+                // Poiyomi はテクスチャの有無でシェーダーキーワード（ロック時の分岐）が変わるため、ない領域を既定値で埋めない
+                return new AtlasChannel(prop, kind, rules.ToArray()).NotFillable();
             }
 
             return new DataShaderAdapter("poiyomi-toon", 1, "Poiyomi Toon 10.0.29", s => PoiyomiShaderNames.Contains(s.name), new[]

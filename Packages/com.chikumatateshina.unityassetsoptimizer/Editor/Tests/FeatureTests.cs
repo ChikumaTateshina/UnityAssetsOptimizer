@@ -103,7 +103,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             Assert.AreEqual(1, renderers.Length, "two quads merged into one renderer");
             Assert.AreEqual(4, result.After.Get(MetricKeys.Triangles).value);
             Assert.AreEqual(1, result.After.Get(MetricKeys.DrawCalls).value);
-            Assert.AreEqual(1, generated.GetComponentsInChildren<Transform>(true).Length - 1, "the emptied GameObject is removed (independent prefab)");
+            var emptied = generated.GetComponentsInChildren<Transform>(true).Skip(1).Single(t => t.GetComponent<Renderer>() == null).gameObject;
+            Assert.IsFalse(emptied.activeSelf, "the emptied GameObject is hidden");
+            Assert.IsTrue(emptied.CompareTag("EditorOnly"), "and excluded from builds");
             CollectionAssert.AreEqual(before, _a.Hash(originals));
             Assert.AreEqual(2, root.GetComponentsInChildren<MeshRenderer>().Length, "original scene objects unchanged");
         }

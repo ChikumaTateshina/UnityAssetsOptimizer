@@ -15,6 +15,17 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
     public enum PrefabOutputMode { VariantWhenPossible, Unpacked }
 
+    /// <summary>結合で空になった GameObject の扱い。</summary>
+    public enum EmptyObjectHandling
+    {
+        /// <summary>そのまま残す。</summary>
+        Keep,
+        /// <summary>非表示にして EditorOnly タグを付ける（ビルドには含まれない。Prefab Variant でも可）。</summary>
+        HideEditorOnly,
+        /// <summary>削除する（独立 Prefab 出力時。Variant では非表示 + EditorOnly にする）。</summary>
+        Delete,
+    }
+
     /// <summary>ユーザーが選んだ近似 Material の統合（Material はアセットパス + ローカル ID で識別）。</summary>
     [Serializable]
     public class MaterialMergeChoice
@@ -41,6 +52,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         [Header("Atlas")]
         public int atlasMaxSize = 4096;
         public int atlasPadding = 8;
+        /// <summary>オブジェクトの大きさ（ワールド面積）に対して解像度が過剰なテクスチャを縮め、テクセル密度を揃えて配分する。</summary>
+        public bool atlasBalanceByObjectSize = true;
 
         [Header("Texture Compression")]
         [Range(0, 100)] public int compressionQuality = 50;
@@ -60,8 +73,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public bool meshCombineSkinned;
         /// <summary>静的結合の空間グリッド（m）。カリング単位を保つため、セルを跨いで結合しない。</summary>
         public float meshCombineCellSize = 10f;
-        /// <summary>結合で空になった GameObject を削除する（独立 Prefab 出力とビルド時のみ。参照・アニメーション対象は残す）。</summary>
-        public bool removeEmptyObjects = true;
+        /// <summary>結合で空になった GameObject の扱い（参照・アニメーション対象・元から空のものは対象外）。</summary>
+        public EmptyObjectHandling emptyObjectHandling = EmptyObjectHandling.HideEditorOnly;
         /// <summary>ポリゴン削減の目標比率（三角形数 × ratio）。</summary>
         [Range(0.05f, 0.95f)] public float polygonReductionRatio = 0.5f;
         /// <summary>簡略化の許容誤差（メッシュ境界ボックス対角長に対する比率）。超過したら不採用。</summary>
