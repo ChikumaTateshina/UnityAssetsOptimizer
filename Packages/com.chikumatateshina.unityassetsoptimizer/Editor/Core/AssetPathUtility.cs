@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using UnityEditor;
 using UnityEngine;
@@ -49,6 +51,24 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 throw new InvalidOperationException("Invalid folder path: " + folder);
             EnsureFolder(parent);
             AssetDatabase.CreateFolder(parent, name);
+        }
+
+        /// <summary>EnsureFolder と同じだが、新しく作ったフォルダを created に記録する。</summary>
+        public static void EnsureFolderTracked(string folder, List<string> created)
+        {
+            if (AssetDatabase.IsValidFolder(folder)) return;
+            var parent = Path.GetDirectoryName(folder)?.Replace('\\', '/');
+            if (!string.IsNullOrEmpty(parent)) EnsureFolderTracked(parent, created);
+            AssetDatabase.CreateFolder(parent, Path.GetFileName(folder));
+            created.Add(folder);
+        }
+
+        /// <summary>記録したフォルダを深い順に、空であれば削除する。</summary>
+        public static void DeleteEmptyFolders(IEnumerable<string> folders)
+        {
+            foreach (var folder in folders.OrderByDescending(f => f.Length))
+                if (AssetDatabase.IsValidFolder(folder) && AssetDatabase.FindAssets(string.Empty, new[] { folder }).Length == 0)
+                    AssetDatabase.DeleteAsset(folder);
         }
 
         public static string SanitizeFileName(string name)

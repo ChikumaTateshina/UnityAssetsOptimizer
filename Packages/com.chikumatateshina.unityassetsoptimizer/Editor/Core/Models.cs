@@ -172,6 +172,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public List<ManifestAsset> snapshotAssets = new List<ManifestAsset>();
         public List<SceneState> sceneStates = new List<SceneState>();
         public List<ForceApproval> forceApprovals = new List<ForceApproval>();
+        /// <summary>出力先に新しく作ったフォルダ（破棄時に空なら削除する）。</summary>
+        public List<string> createdFolders = new List<string>();
 
         public void OnBeforeSerialize() { stateName = state.ToString(); }
         public void OnAfterDeserialize() { }

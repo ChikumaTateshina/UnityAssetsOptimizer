@@ -6,7 +6,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     public static class UnityAssetsOptimizerInfo
     {
         public const string PackageName = "com.chikumatateshina.unityassetsoptimizer";
-        public const string ToolVersion = "0.5.0";
+        public const string ToolVersion = "0.5.1";
         public const int ManifestSchemaVersion = 1;
         public const string MenuRoot = "Tools/UnityAssetsOptimizer/";
 

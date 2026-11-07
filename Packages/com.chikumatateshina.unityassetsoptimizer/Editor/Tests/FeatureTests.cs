@@ -54,6 +54,30 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
         }
 
         [Test]
+        public void DrawCallsCountLitShaderPasses()
+        {
+            // Standard は ForwardBase パスが1つ（ForwardAdd・ShadowCaster・Meta は数えない）。LightMode は大文字で返る
+            var mat = _a.Material("Std", "Standard", _a.Texture("TS", Color.white));
+            var root = _a.Root("Lit");
+            _a.Quad("A", root, mat, Vector3.zero);
+            _a.Quad("B", root, mat, Vector3.right);
+            var baseline = OptimizerPipeline.Analyze(new[] { root }, TestAssets.Only(ContentPreset.World)).Baseline;
+            Assert.AreEqual(2, baseline.Get(MetricKeys.DrawCalls).value, "draw calls");
+            Assert.AreEqual(1, baseline.Get(MetricKeys.SetPassCalls).value, "set pass calls");
+            Assert.AreEqual(2, baseline.Get(MetricKeys.Batches).value, "batches");
+
+            if (Shader.Find("Hidden/lilToonOutline") != null)
+            {
+                // lilToon の輪郭付きは ForwardBase パスが2つ（本体と輪郭）
+                var lil = _a.Material("LilO", "Hidden/lilToonOutline", null);
+                var lilRoot = _a.Root("LilOutline");
+                _a.Quad("A", lilRoot, lil, Vector3.zero);
+                var lilBaseline = OptimizerPipeline.Analyze(new[] { lilRoot }, TestAssets.Only(ContentPreset.Avatar)).Baseline;
+                Assert.AreEqual(2, lilBaseline.Get(MetricKeys.DrawCalls).value, "lilToon outline draws");
+            }
+        }
+
+        [Test]
         public void PrefabAssetIsOutputAsVariant()
         {
             var root = TwoQuads(out _);

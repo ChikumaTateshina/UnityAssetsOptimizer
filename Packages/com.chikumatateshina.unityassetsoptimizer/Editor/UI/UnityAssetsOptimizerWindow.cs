@@ -371,10 +371,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUI.BeginChangeCheck();
-                var folder = EditorGUILayout.TextField(new GUIContent("Prefab の出力先", "空欄なら " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/ 内。Mesh・Material・Texture 等の依存アセットとスナップショットは常に " + UnityAssetsOptimizerInfo.GeneratedRoot + " に置きます"), _settings.prefabOutputFolder);
+                var folder = EditorGUILayout.TextField(new GUIContent("出力先", "Prefab・Material・Mesh・Texture などの生成物の出力先。空欄なら " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/ 内。復元用の Manifest・スナップショット・レポートは常に " + UnityAssetsOptimizerInfo.GeneratedRoot + " に置きます"), _settings.prefabOutputFolder);
                 if (GUILayout.Button("選択…", GUILayout.Width(56)))
                 {
-                    var picked = EditorUtility.OpenFolderPanel("Prefab の出力先", Application.dataPath, string.Empty);
+                    var picked = EditorUtility.OpenFolderPanel("生成物の出力先", Application.dataPath, string.Empty);
                     if (!string.IsNullOrEmpty(picked))
                     {
                         var root = UnityAssetsOptimizerInfo.ProjectRoot.Replace('\\', '/');
@@ -401,13 +401,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         static string OutputDescription(OptimizationSettings settings) =>
             string.IsNullOrEmpty(settings.prefabOutputFolder)
                 ? UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/"
-                : settings.prefabOutputFolder + "/（依存アセットは " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/）";
+                : settings.prefabOutputFolder + "/（復元用データは " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/）";
 
         void RunExecute()
         {
             var executing = _dryRun.Plans.Where(p => p.WillExecute).ToList();
             var message =
-                "Prefab の出力先: " + OutputDescription(_settings) + "\n" +
+                "生成物の出力先: " + OutputDescription(_settings) + "\n" +
                 "原本スナップショット: " + Metric.FormatNumber(_dryRun.SnapshotBytes, "bytes") + "（" + _dryRun.Session.Graph.AssetPaths.Count + " ファイル）\n" +
                 "実行する処理: " + string.Join(", ", executing.Select(p => p.Operation.DisplayName + "(" + p.Decision.mode.Label() + ")")) + "\n" +
                 "スキップ項目: " + _dryRun.Plans.Sum(p => p.Items.Count(i => !i.included)) + " 件\n\n" +

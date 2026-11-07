@@ -105,12 +105,17 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
             Assert.IsNotNull(prefab);
             var mat = prefab.GetComponentInChildren<Renderer>().sharedMaterial;
-            Assert.IsTrue(AssetPathUtility.IsUnder(AssetDatabase.GetAssetPath(mat), result.RunFolder), "dependencies stay in the managed folder");
+            Assert.IsTrue(AssetPathUtility.IsUnder(AssetDatabase.GetAssetPath(mat), settings.prefabOutputFolder), "materials go to the chosen folder too");
+            Assert.IsTrue(AssetPathUtility.IsUnder(AssetDatabase.GetAssetPath(mat.mainTexture), settings.prefabOutputFolder), "textures go to the chosen folder too");
+            Assert.IsTrue(File.Exists(Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, result.RunFolder, UnityAssetsOptimizerInfo.ManifestFileName)), "manifest stays in the managed folder");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(result.RunFolder + "/" + UnityAssetsOptimizerInfo.GeneratedFolderName), "no leftover empty Generated folder");
 
             var run = RestoreService.FindRuns().First(r => r.RunFolder == result.RunFolder);
             Assert.IsTrue(RestoreService.DiscardRun(run.RunFolder, out var error, run.Manifest), error);
             _a.RunFolders.Remove(result.RunFolder);
             Assert.IsNull(AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]), "prefab in the chosen folder is removed too");
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GetAssetPath(mat)), "material removed");
+            Assert.IsFalse(AssetDatabase.IsValidFolder(TestAssets.Folder + "/Out"), "folders created for the output are removed when empty");
         }
 
         [Test]

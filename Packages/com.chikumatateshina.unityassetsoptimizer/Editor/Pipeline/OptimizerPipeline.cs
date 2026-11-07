@@ -58,6 +58,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public RunReport Report;
         public MetricSet After;
         public List<string> GeneratedPrefabs = new List<string>();
+        /// <summary>出力先フォルダへ移した生成物と、新しく作ったフォルダ（失敗時の後始末用）。</summary>
+        public List<string> MovedOutputs = new List<string>();
+        public List<string> CreatedFolders = new List<string>();
         public List<RankResult> Ranks = new List<RankResult>();
         public string ReportPath;
         public ConversionReport Conversion;
@@ -425,20 +428,28 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 foreach (var o in gen.Outputs) o.path = generatedFolder + o.path.Substring(staging.Length);
                 result.GeneratedPrefabs = prefabPaths.Select(p => generatedFolder + p.Substring(staging.Length)).ToList();
 
-                // 指定された出力先へ Prefab だけを移す（依存アセットは管理フォルダに残る。GUID は維持される）
+                // 出力先が指定されていれば、生成物（Prefab・Material・Mesh・Texture 等）をすべてそこへ移す。
+                // サブフォルダ構成（Materials/ 等）は保ち、名前が重なれば別名にする。GUID は維持されるため参照は切れない。
+                // 復元用の Manifest・スナップショット・レポートは管理フォルダに残す。
                 var outputFolder = (session.Settings.prefabOutputFolder ?? string.Empty).Replace('\\', '/').TrimEnd('/');
                 if (outputFolder.Length > 0)
                 {
-                    AssetPathUtility.EnsureFolder(outputFolder);
-                    for (int i = 0; i < result.GeneratedPrefabs.Count; i++)
+                    AssetPathUtility.EnsureFolderTracked(outputFolder, result.CreatedFolders);
+                    foreach (var o in gen.Outputs)
                     {
-                        var from = result.GeneratedPrefabs[i];
-                        var to = AssetDatabase.GenerateUniqueAssetPath(outputFolder + "/" + Path.GetFileName(from));
-                        var err = AssetDatabase.MoveAsset(from, to);
-                        if (!string.IsNullOrEmpty(err)) throw new OptimizerAbortException("Prefab を出力先へ移動できません: " + err);
-                        result.GeneratedPrefabs[i] = to;
-                        foreach (var o in gen.Outputs.Where(o => o.path == from)) o.path = to;
+                        var relative = o.path.Substring(generatedFolder.Length + 1);
+                        var dir = Path.GetDirectoryName(relative)?.Replace('\\', '/');
+                        var targetDir = string.IsNullOrEmpty(dir) ? outputFolder : outputFolder + "/" + dir;
+                        AssetPathUtility.EnsureFolderTracked(targetDir, result.CreatedFolders);
+                        var to = AssetDatabase.GenerateUniqueAssetPath(targetDir + "/" + Path.GetFileName(relative));
+                        var err = AssetDatabase.MoveAsset(o.path, to);
+                        if (!string.IsNullOrEmpty(err)) throw new OptimizerAbortException("生成物を出力先へ移動できません: " + err);
+                        for (int i = 0; i < result.GeneratedPrefabs.Count; i++)
+                            if (result.GeneratedPrefabs[i] == o.path) result.GeneratedPrefabs[i] = to;
+                        o.path = to;
+                        result.MovedOutputs.Add(to);
                     }
+                    AssetPathUtility.DeleteEmptyFolders(AssetDatabase.GetSubFolders(generatedFolder).Concat(new[] { generatedFolder }).ToList());
                 }
 
                 Step("事後計測", 0.9f);
@@ -481,6 +492,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 manifest.targets.AddRange(session.Selection.Targets);
                 manifest.outputs.AddRange(gen.Outputs);
                 manifest.outputPaths.AddRange(gen.Outputs.Select(o => o.path));
+                manifest.createdFolders.AddRange(result.CreatedFolders);
                 manifest.decisions.AddRange(plans.Select(p => p.Decision));
                 manifest.snapshotAssets.AddRange(snapshot.Assets);
                 manifest.sceneStates.AddRange(sceneStates);
@@ -577,9 +589,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             List<SceneState> sceneStates, string runFolder, RunLog log)
         {
             log.Error("pipeline", result.Error ?? "失敗");
-            // 出力先へ移動済みの Prefab があれば、それも破棄する
-            foreach (var p in result.GeneratedPrefabs.Where(p => runFolder == null || !AssetPathUtility.IsUnder(p, runFolder)))
-                if (AssetDatabase.LoadAssetAtPath<GameObject>(p) != null) AssetDatabase.DeleteAsset(p);
+            // 出力先へ移動済みの生成物と、新しく作ったフォルダも破棄する
+            foreach (var p in result.MovedOutputs)
+                if (AssetDatabase.LoadMainAssetAtPath(p) != null) AssetDatabase.DeleteAsset(p);
+            AssetPathUtility.DeleteEmptyFolders(result.CreatedFolders);
             if (runFolder != null && !RestoreService.DiscardRun(runFolder, out var discardError))
                 log.Error("rollback", discardError);
             else if (runFolder != null)

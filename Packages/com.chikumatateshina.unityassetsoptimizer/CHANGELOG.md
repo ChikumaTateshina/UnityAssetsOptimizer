@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1] - 2026-11-07
+
+### Changed
+- 出力先を指定した場合、Prefab だけでなく Material・Mesh・Texture などすべての生成物を指定フォルダへ出力
+  （`Materials/` 等のサブフォルダで整理。復元用の Manifest・スナップショット・レポートは管理フォルダに残す。破棄時は出力先の生成物と作成したフォルダも削除）
+
+### Fixed
+- Draw Calls / SetPass Calls / Batches の推定が、ライティングを使うシェーダー（Standard・lilToon・Poiyomi 等）で常に 0 になっていた問題
+  （Unity がパスの LightMode タグを大文字で返すため、大文字・小文字を区別せずに判定するよう修正）
+
 ## [0.5.0] - 2026-11-07
 
 ### Added

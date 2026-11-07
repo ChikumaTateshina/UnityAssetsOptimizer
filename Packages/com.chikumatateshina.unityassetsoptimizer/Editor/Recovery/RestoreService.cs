@@ -121,7 +121,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         /// <summary>
         /// 生成物（とその実行のスナップショット）を削除する。原本には触れない。
-        /// manifest を渡すと、出力先フォルダへ移した Prefab（GUID が一致するもの）も削除する。
+        /// manifest を渡すと、出力先フォルダへ移した生成物（GUID が一致するもの）と、空になった作成フォルダも削除する。
         /// </summary>
         public static bool DiscardRun(string runFolder, out string error, RunManifest manifest = null)
         {
@@ -132,6 +132,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 return false;
             }
             foreach (var p in ExternalOutputs(manifest, runFolder)) AssetDatabase.DeleteAsset(p);
+            if (manifest != null) AssetPathUtility.DeleteEmptyFolders(manifest.createdFolders);
             if (AssetDatabase.IsValidFolder(runFolder) && !AssetDatabase.DeleteAsset(runFolder))
             {
                 error = "削除に失敗しました: " + runFolder;

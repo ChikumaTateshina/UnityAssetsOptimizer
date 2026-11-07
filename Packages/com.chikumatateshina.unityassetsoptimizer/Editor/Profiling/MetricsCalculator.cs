@@ -37,7 +37,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     public static class MetricsCalculator
     {
         const string TimeUnavailable = "フレーム時間は実機/Editor での実測が必要です（構造値からは算出しません）。";
-        public const string RenderModel = "モデル推定（Built-in Forward・平行光源1灯・影なし・バッチング/インスタンシングなし・有効な Mesh/SkinnedMesh Renderer が全て可視）";
+        public const string RenderModel = "モデル推定（Built-in Forward・平行光源1灯・影なし・バッチング/インスタンシングなし・有効な Mesh/SkinnedMesh Renderer が全て可視。ForwardBase 系パスを数え、シェーダー独自の設定で無効になるパス（輪郭・EarlyZ 等）も計上する上限目安）";
 
         /// <param name="plannedTextures">Dry Run で生成した未インポートのテクスチャ（推定方法を切り替える）。</param>
         public static MetricSet Compute(IList<GameObject> roots, MeasurementContext context, IList<GeneratedTexture> plannedTextures = null)
@@ -146,15 +146,18 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             set.Add(Metric.Of(MetricKeys.Batches, "Batches", draws, "", MetricKind.Estimated, method + "。バッチングなしの前提のため Draw Calls と同値", cid));
         }
 
+        /// <summary>
+        /// 通常の描画で実行される Forward 系のパスか。Unity はタグ値を大文字で返すことがあるため、大文字・小文字を区別しない。
+        /// </summary>
         static bool IsForwardPass(string lightMode)
         {
-            switch (lightMode)
+            switch ((lightMode ?? string.Empty).ToUpperInvariant())
             {
                 case "":
-                case "Always":
-                case "ForwardBase":
-                case "SRPDefaultUnlit":
-                case "UniversalForward":
+                case "ALWAYS":
+                case "FORWARDBASE":
+                case "SRPDEFAULTUNLIT":
+                case "UNIVERSALFORWARD":
                     return true;
                 default:
                     return false;
