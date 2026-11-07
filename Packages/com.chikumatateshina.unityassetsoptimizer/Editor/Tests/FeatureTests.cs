@@ -133,6 +133,51 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
         }
 
         [Test]
+        public void DecimatorDoesNotDistortTextureOnFlatSurface()
+        {
+            // 平面（形の誤差は 0）だが UV が位置に対して非線形: 頂点を寄せるとテクスチャが歪む
+            var mesh = _a.Grid("CurvedUv", 8);
+            var pos = new List<Vector3>();
+            mesh.GetVertices(pos);
+            Vector2 UvAt(Vector3 p) => new Vector2(p.x * p.x, Mathf.Sqrt(p.z));
+            mesh.SetUVs(0, pos.Select(UvAt).ToList());
+            var result = MeshDecimator.Decimate(mesh, 0.3f, 0.01f);
+            try
+            {
+                var rp = new List<Vector3>();
+                result.Mesh.GetVertices(rp);
+                var ruv = new List<Vector2>();
+                result.Mesh.GetUVs(0, ruv);
+                var tris = result.Mesh.triangles;
+                // 元の各頂点の位置で、簡略化後のメッシュから補間した UV が元の UV と一致する
+                foreach (var p in pos)
+                {
+                    bool found = false;
+                    for (int t = 0; t < tris.Length && !found; t += 3)
+                    {
+                        Vector3 a = rp[tris[t]], b = rp[tris[t + 1]], c = rp[tris[t + 2]];
+                        var n = Vector3.Cross(b - a, c - a);
+                        float area = n.magnitude;
+                        if (area < 1e-9f) continue;
+                        float wa = Vector3.Dot(Vector3.Cross(c - b, p - b), n) / (area * area);
+                        float wb = Vector3.Dot(Vector3.Cross(a - c, p - c), n) / (area * area);
+                        float wc = 1 - wa - wb;
+                        if (wa < -1e-4f || wb < -1e-4f || wc < -1e-4f) continue;
+                        found = true;
+                        var uv = ruv[tris[t]] * wa + ruv[tris[t + 1]] * wb + ruv[tris[t + 2]] * wc;
+                        Assert.AreEqual(UvAt(p).x, uv.x, 0.002f, "u at " + p);
+                        Assert.AreEqual(UvAt(p).y, uv.y, 0.002f, "v at " + p);
+                    }
+                    Assert.IsTrue(found, "point covered: " + p);
+                }
+            }
+            finally
+            {
+                Object.DestroyImmediate(result.Mesh);
+            }
+        }
+
+        [Test]
         public void LodGroupIsGeneratedAndValidated()
         {
             var mat = _a.Material("Mat", "Unlit/Texture", _a.Texture("Tex", Color.green));

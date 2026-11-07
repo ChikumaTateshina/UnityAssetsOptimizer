@@ -24,6 +24,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
     /// 頂点を既存頂点へ寄せるだけで新しい頂点属性を作らないため、UV・法線・ボーンウェイト・BlendShape は残った頂点の値をそのまま保持する。
     /// 境界辺・UV 等の継ぎ目（頂点が分かれている辺）・複数サブメッシュにまたがる頂点は固定する。
     /// 許容誤差（境界ボックス対角長 × 比率）を超える縮約は行わない。
+    /// 形が変わらない平面でも、消える頂点の UV が周囲から線形に決まらなければテクスチャが歪むため、
+    /// 縮約前後の UV（UV0 と、あれば UV1）の差が許容値（UV 単位）を超える縮約も行わない。
     /// </summary>
     public static class MeshDecimator
     {
@@ -44,12 +46,19 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             internal Bounds Bounds;
             internal float Ratio;
             internal float MaxErrorRelative;
+            /// <summary>UV0 / UV1（ない場合は null）。</summary>
+            internal List<Vector2>[] Uvs;
+            internal float MaxUvError;
+            internal int RejectedByUv;
             internal List<int>[] PerSub;
             internal long SourceTriangles;
             internal long ResultTriangles;
             internal double MaxApplied;
             internal double Limit;
         }
+
+        /// <summary>UV の許容誤差（UV 単位）。4096 のアトラスで約 2 テクセル、1024 のテクスチャで約 0.5 テクセル。</summary>
+        public const float DefaultMaxUvError = 0.0005f;
 
         public static DecimationResult Decimate(Mesh src, float ratio, float maxErrorRelative)
         {
@@ -90,6 +99,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 Bounds = src.bounds,
                 Ratio = ratio,
                 MaxErrorRelative = maxErrorRelative,
+                Uvs = Enumerable.Range(0, 2).Select(ch =>
+                {
+                    if (!src.HasVertexAttribute(VertexAttribute.TexCoord0 + ch)) return null;
+                    var uv = new List<Vector2>();
+                    src.GetUVs(ch, uv);
+                    return uv.Count == positions.Count ? uv : null;
+                }).Where(u => u != null).ToArray(),
+                MaxUvError = DefaultMaxUvError,
             };
         }
 
@@ -190,6 +207,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (dead[e.U] || dead[e.V] || e.StampU != stamp[e.U] || e.StampV != stamp[e.V]) continue;
                 if (e.Cost > limitSq) break;
                 if (!CanCollapse(e.U, e.V, positions, vertexTris, tris, alive)) continue;
+                if (job.Uvs.Length > 0 && !UvPreserved(e.U, e.V, positions, job.Uvs, job.MaxUvError, vertexTris, tris, alive))
+                {
+                    job.RejectedByUv++;
+                    continue;
+                }
 
                 // u を v に寄せる
                 foreach (var t in vertexTris[e.U].ToList())
@@ -301,6 +323,82 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (after == Vector3.zero || Vector3.Dot(before, after) < 0.2f) return false;
             }
             return true;
+        }
+
+        /// <summary>
+        /// u を v に寄せたときのテクスチャの歪み: u の位置・u を含む三角形の重心・u から出る辺の中点で、
+        /// 縮約前の UV と縮約後の三角形で補間した UV の差がすべて許容値以内か。
+        /// </summary>
+        static bool UvPreserved(int u, int v, List<Vector3> positions, List<Vector2>[] uvs, float tolerance, List<int>[] vertexTris, List<int> tris, bool[] alive)
+        {
+            var before = vertexTris[u].Where(t => alive[t]).ToList();
+            var after = before.Where(t => tris[t * 3] != v && tris[t * 3 + 1] != v && tris[t * 3 + 2] != v).ToList();
+            if (after.Count == 0) return false;
+            int Moved(int i) => i == u ? v : i;
+
+            foreach (var t in before)
+            {
+                int a = tris[t * 3], b = tris[t * 3 + 1], c = tris[t * 3 + 2];
+                // 縮約前の三角形上のサンプル点（重心座標）
+                var samples = new[] { new Vector3(1f / 3, 1f / 3, 1f / 3), Corner(a, b, c, u), Mid(a, b, c, u, 0), Mid(a, b, c, u, 1) };
+                foreach (var w in samples)
+                {
+                    if (w.x < 0) continue;
+                    var p = positions[a] * w.x + positions[b] * w.y + positions[c] * w.z;
+                    // 縮約後の三角形のうち、p を最もよく含むもので補間する
+                    int best = -1;
+                    Vector3 bestW = default;
+                    float bestScore = float.NegativeInfinity;
+                    foreach (var n in after)
+                    {
+                        var bw = Barycentric(p, positions[Moved(tris[n * 3])], positions[Moved(tris[n * 3 + 1])], positions[Moved(tris[n * 3 + 2])]);
+                        float score = Mathf.Min(bw.x, Mathf.Min(bw.y, bw.z));
+                        if (score > bestScore)
+                        {
+                            bestScore = score;
+                            best = n;
+                            bestW = bw;
+                        }
+                    }
+                    if (best < 0 || bestScore < -0.05f) return false; // 縮約後の面の外（形が大きく変わる）
+                    foreach (var uv in uvs)
+                    {
+                        var old = uv[a] * w.x + uv[b] * w.y + uv[c] * w.z;
+                        var now = uv[Moved(tris[best * 3])] * bestW.x + uv[Moved(tris[best * 3 + 1])] * bestW.y + uv[Moved(tris[best * 3 + 2])] * bestW.z;
+                        if ((old - now).sqrMagnitude > tolerance * tolerance) return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// <summary>三角形 (a,b,c) の頂点 u の重心座標（u がなければ x = -1）。</summary>
+        static Vector3 Corner(int a, int b, int c, int u) =>
+            a == u ? new Vector3(1, 0, 0) : b == u ? new Vector3(0, 1, 0) : c == u ? new Vector3(0, 0, 1) : new Vector3(-1, 0, 0);
+
+        /// <summary>u から出る辺（which = 0 / 1 本目）の中点の重心座標。</summary>
+        static Vector3 Mid(int a, int b, int c, int u, int which)
+        {
+            var corner = Corner(a, b, c, u);
+            if (corner.x < 0) return new Vector3(-1, 0, 0);
+            var others = new List<Vector3>();
+            if (a != u) others.Add(new Vector3(1, 0, 0));
+            if (b != u) others.Add(new Vector3(0, 1, 0));
+            if (c != u) others.Add(new Vector3(0, 0, 1));
+            return (corner + others[which]) * 0.5f;
+        }
+
+        /// <summary>p を三角形の平面へ射影したときの重心座標。退化した三角形では (-1,-1,-1)。</summary>
+        static Vector3 Barycentric(Vector3 p, Vector3 a, Vector3 b, Vector3 c)
+        {
+            Vector3 v0 = b - a, v1 = c - a, v2 = p - a;
+            float d00 = Vector3.Dot(v0, v0), d01 = Vector3.Dot(v0, v1), d11 = Vector3.Dot(v1, v1);
+            float d20 = Vector3.Dot(v2, v0), d21 = Vector3.Dot(v2, v1);
+            float denom = d00 * d11 - d01 * d01;
+            if (Mathf.Abs(denom) < 1e-20f) return new Vector3(-1, -1, -1);
+            float y = (d11 * d20 - d01 * d21) / denom;
+            float z = (d00 * d21 - d01 * d20) / denom;
+            return new Vector3(1 - y - z, y, z);
         }
 
         static Vector3 Normal(Vector3 a, Vector3 b, Vector3 c)
