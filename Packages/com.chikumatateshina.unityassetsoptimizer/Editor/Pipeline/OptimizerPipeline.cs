@@ -409,6 +409,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (!valid) throw new OptimizerAbortException("生成物の検証に失敗しました: " + string.Join(" / ", report.validation));
                 Step("テクスチャの確定", 0.6f);
                 gen.FinalizeTextures();
+                var cleanup = EmptyObjectCleaner.Run(gen, session.Analysis.AnimatedBindingPaths);
+                foreach (var note in cleanup.Notes) log.Info(FeatureIds.MeshCombine, note);
 
                 var prefabPaths = new List<string>();
                 for (int i = 0; i < copy.Roots.Count; i++)
@@ -428,7 +430,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 {
                     int rootIndex = i;
                     var changes = gen.StructuralChanges.Where(c => c.RootIndex == rootIndex);
-                    var v = StructuralValidator.Compare(session.Roots[i], AssetDatabase.LoadAssetAtPath<GameObject>(prefabPaths[i]), changes);
+                    var removedObjects = cleanup.Removed.Where(x => x.Key == rootIndex).Select(x => x.Value).ToList();
+                    var v = StructuralValidator.Compare(session.Roots[i], AssetDatabase.LoadAssetAtPath<GameObject>(prefabPaths[i]), changes, removedObjects);
                     if (!v.Passed) throw new OptimizerAbortException("構造検証に失敗しました: " + string.Join(" / ", v.Messages));
                 }
                 report.validation.Add("構造検証: OK（階層・コンポーネント構成・Mesh/Material 参照・三角形数）");
@@ -637,6 +640,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     if (!v.Passed) throw new OptimizerAbortException("UnityAssetsOptimizer: 検証に失敗しました: " + string.Join(" / ", v.Messages));
                 }
                 gen.FinalizeTextures();
+                EmptyObjectCleaner.Run(gen, session.Analysis.AnimatedBindingPaths);
                 var after = MetricsCalculator.Compute(copy.Roots, MeasurementContext.Capture("NDMF ビルド後の構成から計算"));
                 report.metrics = RunReport.Compare(session.Baseline, null, after);
                 report.structuralChanges.AddRange(gen.StructuralChanges.Select(c => (c.Added ? "追加 " : "削除 ") + c.Path + " " + c.ComponentType));

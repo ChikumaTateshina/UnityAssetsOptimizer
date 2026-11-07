@@ -341,6 +341,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     }
                     if (!skinned && _settings.preset == ContentPreset.Avatar)
                         EditorGUILayout.LabelField("アバターでは SkinnedMesh が対象外のため、ほとんど結合されません。", EditorStyles.wordWrappedMiniLabel);
+                    bool removeEmpty = EditorGUILayout.ToggleLeft(new GUIContent("空になった GameObject を削除する",
+                        "結合で Renderer がなくなり Transform だけになった GameObject を削除します。出力形式が Unpacked（独立 Prefab）の場合と NDMF のビルド時のみ" +
+                        "（Prefab Variant では元の子オブジェクトを削除できません）。ほかから参照されているもの・アニメーション対象は残します"), _settings.removeEmptyObjects);
+                    if (removeEmpty != _settings.removeEmptyObjects)
+                    {
+                        _settings.removeEmptyObjects = removeEmpty;
+                        SettingsChanged();
+                    }
+                    if (removeEmpty && _settings.outputMode == PrefabOutputMode.VariantWhenPossible)
+                        EditorGUILayout.LabelField("出力形式が VariantWhenPossible のため、Variant として出力される対象では削除されません（詳細パラメータの「出力形式」を Unpacked に）。", EditorStyles.wordWrappedMiniLabel);
                     EditorGUI.indentLevel--;
                 }
             }
@@ -663,6 +673,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         EditorGUILayout.LabelField(p, EditorStyles.miniLabel);
                         if (GUILayout.Button("Ping", GUILayout.Width(50))) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<GameObject>(p));
                     }
+                if (_lastRun.Report != null && GUILayout.Button(new GUIContent("シーンの元オブジェクトを生成 Prefab に置き換える",
+                        "対象がシーンのオブジェクトならそれを、FBX/Prefab なら開いているシーン内のそのインスタンスを置き換えます（Undo で元に戻せます。シーンは保存しません）")))
+                    ReplaceInScenes(_lastRun.Report.targets, _lastRun.Report.outputs);
                 if (_lastRun.OverwriteSummary != null)
                     EditorGUILayout.LabelField(_lastRun.OverwriteSummary, EditorStyles.wordWrappedMiniLabel);
                 if (_lastRun.VisualDiff != null)
@@ -922,6 +935,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         if (GUILayout.Button("レポート"))
                             EditorUtility.OpenWithDefaultApp(System.IO.Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, run.RunFolder, UnityAssetsOptimizerInfo.ReportsFolderName, "report.md"));
                         if (GUILayout.Button("原本を検証")) _restoreChecks[run.RunFolder] = RestoreService.CheckOriginals(m);
+                        using (new EditorGUI.DisabledScope(m.state != RunState.Committed))
+                            if (GUILayout.Button("シーンに配置")) ReplaceInScenes(m.targets, m.outputs);
                         if (GUILayout.Button("生成物を破棄")) Discard(run);
                     }
 
@@ -945,6 +960,35 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     }
                 }
             }
+        }
+
+        static void ReplaceInScenes(List<TargetRef> targets, List<OutputAsset> outputs)
+        {
+            var notes = new List<string>();
+            var candidates = SceneReplacer.FindCandidates(targets, outputs, notes);
+            var ok = candidates.Where(c => c.Problem == null).ToList();
+            var msg = new System.Text.StringBuilder();
+            if (ok.Count > 0)
+            {
+                msg.AppendLine("次のオブジェクトを生成 Prefab のインスタンスに置き換えます（親・並び順・位置・名前を引き継ぎ、ほかからの参照は付け替えます。Ctrl+Z で元に戻せます）:");
+                foreach (var c in ok.Take(15))
+                    msg.AppendLine("・" + c.Label + (c.LostOverrides > 0 ? "  ⚠ インスタンス側の上書き " + c.LostOverrides + " 件は失われます" : string.Empty));
+                if (ok.Count > 15) msg.AppendLine("…他 " + (ok.Count - 15) + " 件");
+            }
+            foreach (var c in candidates.Where(c => c.Problem != null).Take(10)) msg.AppendLine("（対象外）" + c.Label + ": " + c.Problem);
+            foreach (var n in notes.Take(10)) msg.AppendLine("（対象外）" + n);
+            if (ok.Count == 0)
+            {
+                EditorUtility.DisplayDialog("シーンへの配置", msg.Length > 0 ? msg.ToString() : "置き換えられるオブジェクトがありません。", "OK");
+                return;
+            }
+            if (!EditorUtility.DisplayDialog("シーンへの配置", msg.ToString(), "置き換える", "キャンセル")) return;
+            var result = SceneReplacer.Replace(ok);
+            var done = result.Replaced + " 個を置き換えました（参照の付け替え " + result.ReferencesRemapped + " 件）。シーンは保存していません。";
+            if (result.UnresolvedReferences.Count > 0)
+                done += "\n\n⚠ 対応するオブジェクトがない参照（結合で削除された Renderer 等）が " + result.UnresolvedReferences.Count + " 件あります。Missing になるため、問題があれば Ctrl+Z で戻してください:\n" +
+                        string.Join("\n", result.UnresolvedReferences.Take(10));
+            EditorUtility.DisplayDialog("シーンへの配置", done, "OK");
         }
 
         void Discard(RunRecord run)

@@ -60,6 +60,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public bool meshCombineSkinned;
         /// <summary>静的結合の空間グリッド（m）。カリング単位を保つため、セルを跨いで結合しない。</summary>
         public float meshCombineCellSize = 10f;
+        /// <summary>結合で空になった GameObject を削除する（独立 Prefab 出力とビルド時のみ。参照・アニメーション対象は残す）。</summary>
+        public bool removeEmptyObjects = true;
         /// <summary>ポリゴン削減の目標比率（三角形数 × ratio）。</summary>
         [Range(0.05f, 0.95f)] public float polygonReductionRatio = 0.5f;
         /// <summary>簡略化の許容誤差（メッシュ境界ボックス対角長に対する比率）。超過したら不採用。</summary>
