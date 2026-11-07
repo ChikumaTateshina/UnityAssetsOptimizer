@@ -28,6 +28,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public sealed class CombineGroup
         {
             public bool Skinned;
+            /// <summary>ライトマップを光テクスチャとして焼き込んだ Renderer の結合（UV1 は光テクスチャ用なので並べ直さない）。</summary>
+            public bool LightBaked;
             public List<RendererInfo> Members = new List<RendererInfo>();
         }
 
@@ -59,7 +61,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 candidates.Add(new Candidate { Info = info, Item = item, KeyParts = parts, Key = string.Join("|", parts.Select(p => p.Value)) });
             }
             analysis.Data = candidates;
-            analysis.Notes.Add("結合後の Prefab はライトマップ情報を持ちません（再ベイクが必要）。ライトマップの対象（Contribute GI）を結合した場合は、ライトマップ UV（UV1）が重ならないよう並べ直します。");
+            analysis.Notes.Add("結合後の Prefab はライトマップ情報を持ちません（再ベイクが必要）。静的メッシュを結合した場合は、ライトマップ UV（UV1）が重ならないよう並べ直します（なければ生成）。");
             analysis.Notes.Add("結合された側の GameObject は残り、Renderer/MeshFilter のみ削除されます（Collider はそのまま残ります）。");
             return analysis;
         }
@@ -174,7 +176,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         p[0].Item.reason = NoPartnerReason(p[0], included, partitions.Count > 1);
                         continue;
                     }
-                    var group = new CombineGroup { Skinned = p[0].Info.Renderer is SkinnedMeshRenderer };
+                    var group = new CombineGroup
+                    {
+                        Skinned = p[0].Info.Renderer is SkinnedMeshRenderer,
+                        LightBaked = context.LightBakedRendererKeys != null && p.Any(c => context.LightBakedRendererKeys.Contains(c.Info.Key)),
+                    };
                     group.Members.AddRange(p.Select(c => c.Info));
                     foreach (var c in p) c.Item.reason = "グループ" + groups.Count + (c == p[0] ? "（結合先）" : string.Empty);
                     groups.Add(group);
@@ -223,8 +229,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 // 結合前にワールド境界を取得（スキンの localBounds 再計算用）
                 var worldBounds = renderers.Select(r => r.bounds).ToList();
                 var result = MeshMerger.Merge(sources, group.Skinned, target.name + "_combined");
-                // ライトマップの対象なら、各ソースのライトマップ UV が重ならないよう並べ直す（重なるとベイクした光が混ざる）
-                if (!group.Skinned && (GameObjectUtility.GetStaticEditorFlags(target.gameObject) & StaticEditorFlags.ContributeGI) != 0)
+                // 各ソースのライトマップ UV が重ならないよう並べ直す（重なるとベイクした光が混ざる）。
+                // 変換後にシーンで Static にしてベイクする使い方もあるため、Contribute GI の有無にかかわらず行う
+                if (!group.Skinned && !group.LightBaked)
                     MeshMerger.PrepareLightmapUvs(result.Mesh, result.VertexOffsets);
                 var mesh = gen.AddAsset(result.Mesh, "Meshes", result.Mesh.name, Id, string.Join(",", group.Members.Select(m => m.Key)));
 

@@ -208,6 +208,15 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         public const string SharedOutputFolderName = "_Shared";
 
+        /// <summary>ライトマップを光テクスチャとして焼き込んだ Renderer（計画時に記録したもの）。</summary>
+        static HashSet<string> LightBakedKeys(List<OperationPlan> plans)
+        {
+            var context = new OptimizationContext();
+            var plan = plans.FirstOrDefault(p => p.Decision.operationId == FeatureIds.LightmapBake && p.WillExecute);
+            plan?.Operation.ApplyToContext(plan, context);
+            return context.LightBakedRendererKeys;
+        }
+
         /// <summary>
         /// 生成物の持ち主（出力先の下のフォルダ名）。Prefab は対象ごと、それ以外はそれを使う Prefab が 1 つなら同じフォルダ、複数なら _Shared。
         /// フォルダ名は対象の名前（Android/iOS 版は接尾辞付き）。同名の対象は番号を付けて分ける。
@@ -450,6 +459,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (!valid) throw new OptimizerAbortException("生成物の検証に失敗しました: " + string.Join(" / ", report.validation));
                 Step("テクスチャの確定", 0.6f);
                 gen.FinalizeTextures();
+                EmptyObjectCleaner.EnsureLightmapUvs(gen, LightBakedKeys(plans));
                 var cleanup = EmptyObjectCleaner.Run(gen, session.Analysis.AnimatedBindingPaths);
                 foreach (var note in cleanup.Notes) log.Info(FeatureIds.MeshCombine, note);
 

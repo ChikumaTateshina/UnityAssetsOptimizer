@@ -80,6 +80,63 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return result;
         }
 
+        /// <summary>
+        /// この実行で作った静的メッシュのライトマップ UV（UV1）を、なければ自動生成し（Generate Lightmap UVs と同じ処理）、
+        /// あっても三角形が重なっている（ライトマップ用に作られていない 2 つ目の UV 等）なら作り直す。
+        /// UV1 がないと Unity は UV0 でライトマップを焼くが、アトラス化した UV0 は複数の面で同じ領域を共有するため光が混ざる。
+        /// 光テクスチャを焼き込んだ Renderer と、Material が UV1 を別の用途（Detail・デカール等）に使っている場合は変えない。
+        /// すべての処理の後、Prefab の保存前に行う。
+        /// </summary>
+        public static int EnsureLightmapUvs(GenerationContext gen, ICollection<string> lightBakedKeys)
+        {
+            int generated = 0, replaced = 0;
+            var done = new HashSet<Mesh>();
+            foreach (var pair in gen.Copy.AllRenderers)
+            {
+                if (!(pair.Value is MeshRenderer) || (lightBakedKeys != null && lightBakedKeys.Contains(pair.Key))) continue;
+                var mesh = pair.Value.GetComponent<MeshFilter>()?.sharedMesh;
+                if (mesh == null || !gen.IsGenerated(mesh) || !done.Add(mesh)) continue;
+                bool has = mesh.HasVertexAttribute(UnityEngine.Rendering.VertexAttribute.TexCoord1);
+                if (has && (UsesUv1(pair.Value.sharedMaterials) || MeshMerger.LightmapUvOverlap(mesh) <= MaxLightmapOverlap)) continue;
+                Unwrapping.GenerateSecondaryUVSet(mesh);
+                if (has) replaced++;
+                // 生成したメッシュだけを保存する（SaveAssets は利用者の未保存の変更まで書き込むため使わない）
+                if (gen.Persist && EditorUtility.IsPersistent(mesh))
+                {
+                    EditorUtility.SetDirty(mesh);
+                    AssetDatabase.SaveAssetIfDirty(mesh);
+                }
+                generated++;
+            }
+            if (generated > 0)
+                gen.Log.Info(FeatureIds.MeshCombine, "生成したメッシュ " + generated + " 個にライトマップ UV（UV1）を自動生成しました（変換後のライトベイク用" +
+                                                      (replaced > 0 ? "。うち " + replaced + " 個は元の UV1 で三角形が重なっていたため作り直し" : string.Empty) + "）。");
+            return generated;
+        }
+
+        /// <summary>ライトマップ UV として使える重なりの上限（ラスタライズの誤差を見込む）。</summary>
+        public const float MaxLightmapOverlap = 0.02f;
+
+        /// <summary>Material が UV1 をライトマップ以外に使っているか（Standard の Detail を UV1 で使う、lilToon / Poiyomi の UV 選択が UV1 等）。</summary>
+        static bool UsesUv1(Material[] materials)
+        {
+            foreach (var m in materials)
+            {
+                if (m == null || m.shader == null) continue;
+                if (m.HasProperty("_UVSec") && m.GetFloat("_UVSec") > 0.5f && (m.GetTexture("_DetailAlbedoMap") != null || m.GetTexture("_DetailNormalMap") != null)) return true;
+                var shader = m.shader;
+                for (int i = 0; i < shader.GetPropertyCount(); i++)
+                {
+                    var name = shader.GetPropertyName(i);
+                    var type = shader.GetPropertyType(i);
+                    if (type != UnityEngine.Rendering.ShaderPropertyType.Float && type != UnityEngine.Rendering.ShaderPropertyType.Int && type != UnityEngine.Rendering.ShaderPropertyType.Range) continue;
+                    if (!(name.EndsWith("_UVMode", StringComparison.Ordinal) || (name.EndsWith("UV", StringComparison.Ordinal) && name.StartsWith("_", StringComparison.Ordinal)))) continue;
+                    if (Mathf.Approximately(m.GetFloat(name), 1f)) return true;
+                }
+            }
+            return false;
+        }
+
         static int Depth(Transform t)
         {
             int d = 0;

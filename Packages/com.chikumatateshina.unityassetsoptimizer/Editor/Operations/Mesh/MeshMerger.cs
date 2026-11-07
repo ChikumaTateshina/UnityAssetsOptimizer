@@ -287,6 +287,48 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         }
 
         /// <summary>
+        /// ライトマップ UV（UV1）で三角形が重なっている割合（塗られた画素のうち 2 回以上塗られたもの。256x256 の格子で測る）。
+        /// ライトマップ UV として作られたものは 0 に近い。UV1 がなければ 1。
+        /// </summary>
+        public static float LightmapUvOverlap(Mesh mesh)
+        {
+            if (!mesh.HasVertexAttribute(VertexAttribute.TexCoord1)) return 1f;
+            const int n = 256;
+            var uv = new List<Vector2>();
+            mesh.GetUVs(1, uv);
+            var count = new byte[n * n];
+            for (int sm = 0; sm < mesh.subMeshCount; sm++)
+            {
+                if (mesh.GetTopology(sm) != MeshTopology.Triangles) continue;
+                var tris = mesh.GetTriangles(sm);
+                for (int t = 0; t + 2 < tris.Length; t += 3)
+                {
+                    Vector2 a = uv[tris[t]] * n, b = uv[tris[t + 1]] * n, c = uv[tris[t + 2]] * n;
+                    float area = (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
+                    if (Math.Abs(area) < 1e-6f) continue;
+                    int x0 = Math.Max(0, (int)Math.Floor(Math.Min(a.x, Math.Min(b.x, c.x)))), x1 = Math.Min(n - 1, (int)Math.Ceiling(Math.Max(a.x, Math.Max(b.x, c.x))));
+                    int y0 = Math.Max(0, (int)Math.Floor(Math.Min(a.y, Math.Min(b.y, c.y)))), y1 = Math.Min(n - 1, (int)Math.Ceiling(Math.Max(a.y, Math.Max(b.y, c.y))));
+                    for (int y = y0; y <= y1; y++)
+                        for (int x = x0; x <= x1; x++)
+                        {
+                            float px = x + 0.5f, py = y + 0.5f;
+                            float w0 = ((b.x - px) * (c.y - py) - (c.x - px) * (b.y - py)) / area;
+                            float w1 = ((c.x - px) * (a.y - py) - (a.x - px) * (c.y - py)) / area;
+                            if (w0 < 0 || w1 < 0 || 1 - w0 - w1 < 0) continue;
+                            if (count[y * n + x] < 255) count[y * n + x]++;
+                        }
+                }
+            }
+            int covered = 0, multi = 0;
+            foreach (var c in count)
+            {
+                if (c > 0) covered++;
+                if (c > 1) multi++;
+            }
+            return covered == 0 ? 1f : (float)multi / covered;
+        }
+
+        /// <summary>
         /// 静的結合したメッシュのライトマップ UV（UV1）を、ソースごとに重ならないよう並べ直す。
         /// 各ソースの UV1（ソース単体では重ならない）を、使用範囲の縦横比を保ち、面積（結合先空間）に比例した大きさの区画へ詰める。
         /// UV1 がない場合は Unity のライトマップ UV 自動生成で作る。そのままだと各ソースの UV1 が重なり、ベイクした光が混ざる。
