@@ -186,6 +186,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             File.WriteAllText(Path.Combine(Full(Previous.RunFolder), UnityAssetsOptimizerInfo.ManifestFileName), JsonUtility.ToJson(manifest, true), new UTF8Encoding(false));
             // 前回の実行フォルダ内の空になった生成物フォルダだけを片付ける（出力先フォルダは利用者のものなので残す）
             AssetPathUtility.DeleteEmptyFolders(folders.Where(f => AssetPathUtility.IsUnder(f, Previous.RunFolder)));
+            // 前回の実行が出力先に作ったフォルダも、空になっていれば片付ける（フォルダ構成が変わった場合の旧フォルダ等）
+            AssetPathUtility.DeleteEmptyFolders(manifest.createdFolders);
         }
 
         /// <summary>失敗時: 退避した出力を元の場所と内容に戻す。</summary>

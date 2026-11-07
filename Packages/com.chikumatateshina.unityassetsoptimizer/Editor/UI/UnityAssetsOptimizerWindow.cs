@@ -434,7 +434,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             using (new EditorGUILayout.HorizontalScope())
             {
                 EditorGUI.BeginChangeCheck();
-                var folder = EditorGUILayout.TextField(new GUIContent("出力先", "Prefab・Material・Mesh・Texture などの生成物の出力先。空欄なら " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/ 内。復元用の Manifest・スナップショット・レポートは常に " + UnityAssetsOptimizerInfo.GeneratedRoot + " に置きます"), _settings.prefabOutputFolder);
+                var folder = EditorGUILayout.TextField(new GUIContent("出力先", "Prefab・Material・Mesh・Texture などの生成物の出力先。変換したオブジェクトごとにフォルダを作り、その中に Materials/ 等を置きます（複数のオブジェクトで共有する生成物は _Shared/）。空欄なら " + UnityAssetsOptimizerInfo.GeneratedRoot + "/<run-id>/ 内。復元用の Manifest・スナップショット・レポートは常に " + UnityAssetsOptimizerInfo.GeneratedRoot + " に置きます"), _settings.prefabOutputFolder);
                 if (GUILayout.Button("選択…", GUILayout.Width(56)))
                 {
                     var picked = EditorUtility.OpenFolderPanel("生成物の出力先", Application.dataPath, string.Empty);

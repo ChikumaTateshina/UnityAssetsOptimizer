@@ -206,6 +206,47 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return new IOptimizationOperation[] { new MobileShaderConversionOperation(platform), new MobileTextureOperation(platform) };
         }
 
+        public const string SharedOutputFolderName = "_Shared";
+
+        /// <summary>
+        /// 生成物の持ち主（出力先の下のフォルダ名）。Prefab は対象ごと、それ以外はそれを使う Prefab が 1 つなら同じフォルダ、複数なら _Shared。
+        /// フォルダ名は対象の名前（Android/iOS 版は接尾辞付き）。同名の対象は番号を付けて分ける。
+        /// </summary>
+        static Dictionary<OutputAsset, string> OutputOwners(List<OutputAsset> outputs, AnalysisSession session, WorkingCopy copy)
+        {
+            var suffix = session.Kind == RunKind.Optimize ? string.Empty : "_" + session.Kind;
+            var names = new List<string>();
+            for (int i = 0; i < copy.Roots.Count; i++)
+            {
+                var name = AssetPathUtility.SanitizeFileName(copy.Roots[i].name + suffix);
+                var unique = name;
+                for (int n = 2; names.Contains(unique); n++) unique = name + "_" + n;
+                names.Add(unique);
+            }
+            var prefabOwner = new Dictionary<string, string>();
+            for (int i = 0; i < session.Selection.Targets.Count; i++)
+            {
+                var prefab = outputs.FirstOrDefault(o => (o.kind == "Prefab" || o.kind == "PrefabVariant") && o.sourceRef == session.Selection.Targets[i].globalObjectId);
+                if (prefab != null) prefabOwner[prefab.path] = names[i];
+            }
+            var usedBy = new Dictionary<string, HashSet<string>>();
+            foreach (var pair in prefabOwner)
+                foreach (var dep in AssetDatabase.GetDependencies(pair.Key, true))
+                {
+                    if (!usedBy.TryGetValue(dep, out var set)) usedBy[dep] = set = new HashSet<string>();
+                    set.Add(pair.Value);
+                }
+            var result = new Dictionary<OutputAsset, string>();
+            foreach (var o in outputs)
+            {
+                if (prefabOwner.TryGetValue(o.path, out var owner)) result[o] = owner;
+                else if (usedBy.TryGetValue(o.path, out var set) && set.Count == 1) result[o] = set.First();
+                else if (names.Count == 1) result[o] = names[0];
+                else result[o] = SharedOutputFolderName;
+            }
+            return result;
+        }
+
         static string OutputFolderName(RunKind kind) => kind == RunKind.Optimize ? UnityAssetsOptimizerInfo.GeneratedFolderName : kind.ToString();
 
         static void CheckConversionEnabled(AnalysisSession session)
@@ -466,11 +507,14 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (outputFolder.Length > 0)
                 {
                     AssetPathUtility.EnsureFolderTracked(outputFolder, result.CreatedFolders);
+                    // 変換したオブジェクトごとにフォルダを作る（Materials/ 等もオブジェクトごとに独立。複数で共有する生成物は _Shared）
+                    var owners = OutputOwners(gen.Outputs, session, copy);
                     foreach (var o in gen.Outputs)
                     {
                         var relative = o.path.Substring(generatedFolder.Length + 1);
                         var dir = Path.GetDirectoryName(relative)?.Replace('\\', '/');
-                        var targetDir = string.IsNullOrEmpty(dir) ? outputFolder : outputFolder + "/" + dir;
+                        var ownerFolder = outputFolder + "/" + owners[o];
+                        var targetDir = string.IsNullOrEmpty(dir) ? ownerFolder : ownerFolder + "/" + dir;
                         AssetPathUtility.EnsureFolderTracked(targetDir, result.CreatedFolders);
                         var to = AssetDatabase.GenerateUniqueAssetPath(targetDir + "/" + Path.GetFileName(relative));
                         var err = AssetDatabase.MoveAsset(o.path, to);
