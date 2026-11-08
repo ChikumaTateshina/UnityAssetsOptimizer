@@ -118,18 +118,23 @@ def main():
     repo = os.environ["GITHUB_REPOSITORY"]
     token = os.environ.get("GITHUB_TOKEN")
 
-    listing, pages_url = build(repo, token)
-    # リリース直後は API への反映が遅れることがあるため、期待するバージョンが現れるまで再取得する
+    # リリース直後は API やアセットの取得が遅れる・一時的に失敗することがあるため、期待するバージョンが現れるまで再取得する
     expect = (args.expect_tag or "").lstrip("v")
-    for attempt in range(10):
-        versions = listing["packages"].get(PACKAGE_NAME, {}).get("versions", {})
-        if not expect or expect in versions:
-            break
-        print(f"waiting for {PACKAGE_NAME}@{expect} to appear in releases (attempt {attempt + 1})")
+    listing = pages_url = None
+    for attempt in range(20):
+        try:
+            listing, pages_url = build(repo, token)
+        except Exception as e:  # 一時的なネットワーク・API のエラー
+            print(f"failed to build the listing (attempt {attempt + 1}): {e}")
+            listing = None
+        if listing is not None:
+            versions = listing["packages"].get(PACKAGE_NAME, {}).get("versions", {})
+            if not expect or expect in versions:
+                break
+            print(f"waiting for {PACKAGE_NAME}@{expect} to appear in releases (attempt {attempt + 1})")
         time.sleep(15)
-        listing, pages_url = build(repo, token)
     else:
-        sys.exit(f"release for {expect} was not found")
+        sys.exit(f"release for {expect} was not found" if listing is not None else "could not build the listing")
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "index.json"), "w", encoding="utf-8") as f:
         json.dump(listing, f, ensure_ascii=False, indent=2)
