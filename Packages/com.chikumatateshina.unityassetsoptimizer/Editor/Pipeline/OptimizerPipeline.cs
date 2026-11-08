@@ -547,6 +547,35 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     log.Info("pipeline", result.OverwriteSummary);
                 }
 
+                if (session.Settings.exportFbx)
+                {
+                    if (FbxExport.IsAvailable(out var fbxReason))
+                    {
+                        Step("FBX の書き出し", 0.88f);
+                        var generatedMeshes = new HashSet<string>(gen.Outputs.Where(o => o.kind == "Mesh").Select(o => o.path));
+                        var unused = new HashSet<string>();
+                        foreach (var prefabPath in result.GeneratedPrefabs.ToList())
+                        {
+                            var fbx = FbxExport.ExportAndRelink(prefabPath, generatedMeshes);
+                            var prefabOutput = gen.Outputs.FirstOrDefault(o => o.path == prefabPath);
+                            unused.UnionWith(fbx.RemovedMeshAssets);
+                            gen.Outputs.Add(new OutputAsset { path = fbx.FbxPath, guid = AssetDatabase.AssetPathToGUID(fbx.FbxPath), kind = "Model", operationId = "fbx-export", sourceRef = prefabOutput?.sourceRef });
+                            if (outputFolder.Length > 0) result.MovedOutputs.Add(fbx.FbxPath);
+                            log.Info("fbx-export", fbx.FbxPath + " に書き出しました（静的メッシュ " + fbx.Relinked + " 個は FBX のメッシュを使用）");
+                            foreach (var note in fbx.Notes) log.Info("fbx-export", note);
+                        }
+                        // FBX のメッシュに付け替えて、どの Prefab からも使われなくなったメッシュの .asset を削除する
+                        unused.ExceptWith(AssetDatabase.GetDependencies(result.GeneratedPrefabs.ToArray(), true));
+                        foreach (var path in unused)
+                        {
+                            AssetDatabase.DeleteAsset(path);
+                            gen.Outputs.RemoveAll(o => o.path == path);
+                            result.MovedOutputs.Remove(path);
+                        }
+                    }
+                    else log.Info("fbx-export", "FBX では保存しません: " + fbxReason);
+                }
+
                 Step("事後計測", 0.9f);
                 var prefabRoots = result.GeneratedPrefabs.Select(AssetDatabase.LoadAssetAtPath<GameObject>).ToList();
                 var afterContext = MeasurementContext.Capture("構造値（コミット済み生成物から計算）");

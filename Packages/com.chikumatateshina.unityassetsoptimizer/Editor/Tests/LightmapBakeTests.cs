@@ -60,9 +60,71 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
         static OptimizationSettings Settings(LightBakeShaderMode mode, float strength = 1f)
         {
             var s = TestAssets.Only(ContentPreset.World, FeatureIds.LightmapBake);
+            s.lightBakeTarget = LightBakeTarget.LightTexture;
             s.lightBakeShaderMode = mode;
             s.lightBakeStrength = strength;
             return s;
+        }
+
+        static OptimizationSettings Direct(float strength = 1f)
+        {
+            var s = TestAssets.Only(ContentPreset.World, FeatureIds.LightmapBake);
+            s.lightBakeTarget = LightBakeTarget.IntoTexture;
+            s.lightBakeStrength = strength;
+            return s;
+        }
+
+        /// <summary>Renderer の UV0 の中心で、テクスチャ（保存された画像）の値を読む。</summary>
+        static Color32 ColorAt(GameObject prefab, string child, Texture texture)
+        {
+            var uv0 = prefab.transform.Find(child).GetComponent<MeshFilter>().sharedMesh.uv;
+            var center = new Vector2(uv0.Average(u => u.x), uv0.Average(u => u.y));
+            var decoded = new Texture2D(2, 2);
+            try
+            {
+                decoded.LoadImage(File.ReadAllBytes(Path.Combine(UnityAssetsOptimizerInfo.ProjectRoot, AssetDatabase.GetAssetPath(texture))));
+                return decoded.GetPixel((int)(center.x * decoded.width), (int)(center.y * decoded.height));
+            }
+            finally
+            {
+                Object.DestroyImmediate(decoded);
+            }
+        }
+
+        [Test]
+        public void DirectBakeWritesLitColorIntoOneTexture()
+        {
+            var root = Scene();
+            var result = _a.Run(new[] { root }, Direct());
+            Assert.IsTrue(result.Success, result.Error);
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
+            var dark = prefab.transform.Find("Dark").GetComponent<Renderer>().sharedMaterial;
+            var bright = prefab.transform.Find("Bright").GetComponent<Renderer>().sharedMaterial;
+            Assert.AreEqual(LightmapBakeOperation.UnlitShaderName, dark.shader.name);
+            Assert.AreEqual(dark, bright, "one material and one texture for both objects");
+            Assert.AreEqual(0f, dark.GetFloat("_LightStrength"), "light is in the color texture");
+            var texture = dark.GetTexture("_MainTex");
+            var d = ColorAt(prefab, "Dark", texture);
+            var b = ColorAt(prefab, "Bright", texture);
+            Assert.Less(d.r, 215, "white × 0.5 light is darker");
+            Assert.Greater(b.r, 240, "white × 2 light is bright");
+            Assert.Less(d.r, b.r);
+        }
+
+        [Test]
+        public void DirectBakeKeepsAlbedoColorAndZeroStrengthKeepsIt()
+        {
+            var mat = _a.Material("Red", "Standard", _a.Texture("Red", new Color(1f, 0.2f, 0.2f)));
+            var root = _a.Root("Room");
+            var q = _a.Quad("Q", root, mat, Vector3.zero).GetComponent<MeshRenderer>();
+            q.lightmapIndex = 0;
+            q.lightmapScaleOffset = new Vector4(0.5f, 1f, 0f, 0f);
+            var result = _a.Run(new[] { root }, Direct(0f));
+            Assert.IsTrue(result.Success, result.Error);
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(result.GeneratedPrefabs[0]);
+            var c = ColorAt(prefab, "Q", prefab.transform.Find("Q").GetComponent<Renderer>().sharedMaterial.GetTexture("_MainTex"));
+            Assert.AreEqual(255, c.r, 4);
+            Assert.AreEqual(51, c.g, 6, "albedo kept when strength is 0");
         }
 
         /// <summary>Renderer の UV1 の中心で、光テクスチャ（保存された画像）の値を読む。</summary>

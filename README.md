@@ -41,7 +41,7 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 - Manual Override（`Tools > UnityAssetsOptimizer > Advanced > Enable Manual Override`）で FORCE を有効化できますが、
   原本保全・復元保証・処理境界は解除されません
 
-### 実装状況（v0.13.0）
+### 実装状況（v0.14.0）
 
 | 機能 | 状態 |
 |---|---|
@@ -54,7 +54,8 @@ VRChat のワールド/アバター向けの **非破壊** アセット最適化
 | Static Batching / GPU Instancing 支援・Lightmap UV 再生成 | 実装済み |
 | ポリゴン削減・LOD 生成・Collider 簡略化 | 実装済み（誤差上限付き） |
 | 再変換時の上書き（Prefab の GUID・内部 ID を維持） | 実装済み |
-| ライトマップ焼き込み（Bakery / Progressive、Unlit または元のシェーダー、強度調整） | 実装済み（World） |
+| ライトマップ焼き込み（色のテクスチャへ直接、または光テクスチャ。Bakery / Progressive、強度調整） | 実装済み（World） |
+| FBX での保存・書き出し（Blender 等で編集可能） | 実装済み（Unity の FBX Exporter がある場合） |
 | 結合で空になった GameObject の削除（独立 Prefab 出力時） | 実装済み |
 | シーン上の元オブジェクトを生成 Prefab に置き換え（参照の付け替え・Undo 対応） | 実装済み |
 | Prefab Variant での出力 | 実装済み（Prefab Asset、または構造変更のないインスタンス） |
@@ -85,6 +86,7 @@ Avatar Optimizer（AAO）と併用する場合は、AAO より前に実行され
 - [Avatar Optimizer](https://vpm.anatawa12.com/)（anatawa12）: 未使用オブジェクト・BlendShape・PhysBone 等の最適化
 - [lilNDMFMeshSimplifier](https://github.com/lilxyzw/lilNDMFMeshSimplifier)（lilxyzw）: ビルド時のポリゴン削減
 - [NDMF](https://ndmf.nadena.dev/)（bd_）: ビルド後の構成での評価
+- [FBX Exporter](https://docs.unity3d.com/Packages/com.unity.formats.fbx@4.2/manual/index.html)（Unity 公式、Package Manager の Unity Registry）: 変換結果の FBX 保存
 
 ## 開発
 

@@ -19,6 +19,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public string VerifiedRange;
         public string VerifiedWith;
         public string MainType;
+        /// <summary>VPM ではなく Unity のパッケージレジストリ（Package Manager）から入れるパッケージ。値は追加するときの識別子。</summary>
+        public string RegistryPackageId;
 
         public string InstalledVersion => SdkInfo.Version(PackageName);
 
@@ -48,8 +50,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             return true;
         }
 
-        public string InstallHint =>
-            "VCC の Settings → Packages → Add Repository に " + RepositoryUrl + " を追加し、プロジェクトに「" + DisplayName + "」を追加してください。";
+        public string InstallHint => RegistryPackageId != null
+            ? "Window → Package Manager の Unity Registry から「" + DisplayName + "」を追加してください（ウィンドウの「追加」ボタンでも追加できます）。"
+            : "VCC の Settings → Packages → Add Repository に " + RepositoryUrl + " を追加し、プロジェクトに「" + DisplayName + "」を追加してください。";
 
         public string VccAddRepositoryUrl => "vcc://vpm/addRepo?url=" + Uri.EscapeDataString(RepositoryUrl);
     }
@@ -89,6 +92,20 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             VerifiedRange = ">=0.3.0 <0.4.0",
             VerifiedWith = "0.3.0",
             MainType = "jp.lilxyzw.ndmfmeshsimplifier.runtime.NDMFMeshSimplifier",
+        };
+
+        /// <summary>
+        /// Unity 公式の FBX Exporter。ModelExporter.ExportObject(string, Object) で書き出す（4.2.1 のソースで UV 4 組・BlendShape・スキンの書き出しを確認）。
+        /// </summary>
+        public static readonly ExternalTool FbxExporter = new ExternalTool
+        {
+            Id = "fbx-exporter",
+            DisplayName = "FBX Exporter",
+            PackageName = "com.unity.formats.fbx",
+            RegistryPackageId = "com.unity.formats.fbx@4.2.1",
+            VerifiedRange = ">=4.2.0 <6.0.0",
+            VerifiedWith = "4.2.1",
+            MainType = "UnityEditor.Formats.Fbx.Exporter.ModelExporter",
         };
 
         public static IReadOnlyList<ExternalTool> All => new[] { Ndmf, AvatarOptimizer, LilMeshSimplifier };

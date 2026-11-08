@@ -377,6 +377,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             _settings.decimationMaxError = EditorGUILayout.Slider(new GUIContent("簡略化: 許容誤差", "境界ボックス対角長に対する比率。超える縮約は行わない"), _settings.decimationMaxError, 0.001f, 0.05f);
             if (_settings.preset == ContentPreset.World && _settings.GetMode(FeatureIds.LightmapBake) != ExecutionMode.Off)
             {
+                _settings.lightBakeTarget = (LightBakeTarget)EditorGUILayout.Popup(new GUIContent("ライトマップ焼き込み: 焼き込み先",
+                    "色のテクスチャへ直接: 重ならない UV の配置で「色 × 光」のテクスチャを作り Unlit で表示（どのシェーダー・Quest でも扱いやすい）。" +
+                    "光テクスチャ: 光だけのテクスチャを UV1 で掛け合わせる（色のアトラスはそのまま。強度を後から調整しやすい）"),
+                    (int)_settings.lightBakeTarget, new[] { new GUIContent("色のテクスチャへ直接"), new GUIContent("光テクスチャ（UV1）") });
+                if (_settings.lightBakeTarget == LightBakeTarget.LightTexture)
                 _settings.lightBakeShaderMode = (LightBakeShaderMode)EditorGUILayout.Popup(new GUIContent("ライトマップ焼き込み: シェーダー",
                     "Unlit: 同梱の Unlit シェーダーに切り替え（強度は Material の Light Strength で後から調整可）。元のシェーダー: Standard は Detail Albedo、lilToon はメイン 2nd（乗算）に光を入れる"),
                     (int)_settings.lightBakeShaderMode, new[] { new GUIContent("Unlit に切り替え"), new GUIContent("元のシェーダーのまま") });
@@ -467,6 +472,24 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
             var error = OptimizationSettings.ValidateOutputFolder(_settings.prefabOutputFolder);
             if (error != null) EditorGUILayout.HelpBox(error, MessageType.Error);
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                bool fbxAvailable = FbxExport.IsAvailable(out var fbxReason);
+                bool exportFbx = EditorGUILayout.ToggleLeft(new GUIContent("FBX でも保存する（Blender 等で編集可能）",
+                    "変換結果を <名前>.fbx として出力し、静的メッシュは FBX 内のメッシュを使います（Blender で編集して保存すると Unity に反映されます）。" +
+                    "Unity の FBX Exporter が必要です。SkinnedMesh は .asset のまま使い、FBX は編集用のコピーになります"), _settings.exportFbx);
+                if (exportFbx != _settings.exportFbx)
+                {
+                    _settings.exportFbx = exportFbx;
+                    SaveSettings();
+                }
+                if (exportFbx && !fbxAvailable && ExternalTools.FbxExporter.InstalledVersion == null &&
+                    GUILayout.Button(new GUIContent("FBX Exporter を追加", ExternalTools.FbxExporter.InstallHint), GUILayout.Width(140)) &&
+                    EditorUtility.DisplayDialog("FBX Exporter の追加", "Unity 公式の FBX Exporter（" + ExternalTools.FbxExporter.RegistryPackageId + "）をこのプロジェクトに追加します。", "追加", "キャンセル"))
+                    UnityEditor.PackageManager.Client.Add(ExternalTools.FbxExporter.RegistryPackageId);
+            }
+            if (_settings.exportFbx && !FbxExport.IsAvailable(out var unavailable))
+                EditorGUILayout.LabelField(unavailable, EditorStyles.wordWrappedMiniLabel);
             bool overwrite = EditorGUILayout.ToggleLeft(new GUIContent("再変換時は前回の出力を上書きする",
                 "同じ対象を再変換したとき、前回の Prefab を GUID を保ったまま新しい内容にし（シーンに置いた Prefab はそのまま更新されます）、" +
                 "前回の Material・Mesh 等はほかから参照されていなければ削除します。OFF なら毎回新しく作ります"), _settings.overwritePreviousOutput);
@@ -946,6 +969,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                         if (GUILayout.Button("原本を検証")) _restoreChecks[run.RunFolder] = RestoreService.CheckOriginals(m);
                         using (new EditorGUI.DisabledScope(m.state != RunState.Committed))
                             if (GUILayout.Button("シーンに配置")) ReplaceInScenes(m.targets, m.outputs);
+                        using (new EditorGUI.DisabledScope(m.state != RunState.Committed || !FbxExport.IsAvailable(out _)))
+                            if (GUILayout.Button(new GUIContent("FBX で書き出す", "Blender 等で編集するために、好きな場所へ FBX を書き出します"))) ExportFbxTo(m.outputs);
                         if (GUILayout.Button("生成物を破棄")) Discard(run);
                     }
 
@@ -998,6 +1023,24 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 done += "\n\n⚠ 対応するオブジェクトがない参照（結合で削除された Renderer 等）が " + result.UnresolvedReferences.Count + " 件あります。Missing になるため、問題があれば Ctrl+Z で戻してください:\n" +
                         string.Join("\n", result.UnresolvedReferences.Take(10));
             EditorUtility.DisplayDialog("シーンへの配置", done, "OK");
+        }
+
+        static void ExportFbxTo(List<OutputAsset> outputs)
+        {
+            foreach (var prefab in outputs.Where(o => (o.kind == "Prefab" || o.kind == "PrefabVariant") && AssetDatabase.GUIDToAssetPath(o.guid) == o.path))
+            {
+                var path = EditorUtility.SaveFilePanel("FBX の書き出し", string.Empty, System.IO.Path.GetFileNameWithoutExtension(prefab.path), "fbx");
+                if (string.IsNullOrEmpty(path)) continue;
+                try
+                {
+                    FbxExport.ExportPrefab(prefab.path, path);
+                    EditorUtility.RevealInFinder(path);
+                }
+                catch (Exception e)
+                {
+                    EditorUtility.DisplayDialog("FBX の書き出しに失敗", e.Message, "OK");
+                }
+            }
         }
 
         void Discard(RunRecord run)

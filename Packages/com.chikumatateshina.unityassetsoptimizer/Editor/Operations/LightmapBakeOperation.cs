@@ -8,7 +8,16 @@ using Object = UnityEngine.Object;
 
 namespace ChikumaTateshina.UnityAssetsOptimizer
 {
-    /// <summary>ライトマップ焼き込み後のシェーダー。</summary>
+    /// <summary>ライトマップの焼き込み先。</summary>
+    public enum LightBakeTarget
+    {
+        /// <summary>色のテクスチャへ直接焼き込む（重ならない UV の配置で新しいテクスチャを作り、Unlit で表示）。</summary>
+        IntoTexture,
+        /// <summary>光だけのテクスチャを UV1 で色に掛け合わせる（色のテクスチャはそのまま）。</summary>
+        LightTexture,
+    }
+
+    /// <summary>ライトマップ焼き込み後のシェーダー（光テクスチャの場合）。</summary>
     public enum LightBakeShaderMode
     {
         /// <summary>同梱の Unlit シェーダーに切り替える（色 × 光。強度は Material で調整できる）。</summary>
@@ -62,7 +71,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var data = new BakeData();
             analysis.Data = data;
             var lightmaps = LightmapSettings.lightmaps;
-            var mode = context.Settings.lightBakeShaderMode;
+            bool direct = context.Settings.lightBakeTarget == LightBakeTarget.IntoTexture;
+            // 直接焼き込みは光が色に入るため常に Unlit（判定も Unlit と同じ）
+            var mode = direct ? LightBakeShaderMode.Unlit : context.Settings.lightBakeShaderMode;
             foreach (var info in context.Analysis.Renderers)
             {
                 var label = info.Path.Length == 0 ? "(root)" : info.Path;
@@ -80,7 +91,10 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 });
             }
             analysis.Notes.Add("Unity（Progressive）・Bakery でベイクし、シーンに適用されたライトマップを読み取ります。焼き込んだオブジェクトは Contribute GI を外します（再ベイクで光が二重にならないように）。");
-            analysis.Notes.Add(mode == LightBakeShaderMode.Unlit
+            if (direct)
+                analysis.Notes.Add("色のテクスチャへ直接焼き込みます。アトラスの領域は複数のオブジェクトで共有されるため、各オブジェクトの重ならない UV（ライトマップ UV）の配置で新しいテクスチャを作り、" +
+                                   "元の色のテクセル密度に合わせた解像度で「色 × 光」を描きます。UV0 は新しい配置になり、Unlit で表示します（法線マップ等は使われなくなります）。");
+            else analysis.Notes.Add(mode == LightBakeShaderMode.Unlit
                 ? "Unlit に切り替えます（強度は Material の Light Strength で後から調整できます）。ワールドのライトや反射の影響は受けなくなります。"
                 : "元のシェーダーのまま光を乗せます（Standard: Detail Albedo ×2、lilToon: メイン 2nd の乗算）。リアルタイムのライト・環境光も引き続き当たるため、明るさが一部二重になる場合があります。");
             return analysis;
@@ -151,6 +165,13 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 plan.ExpectedEffect = "焼き込むオブジェクトなし";
                 return plan;
             }
+            if (context.Settings.lightBakeTarget == LightBakeTarget.IntoTexture)
+            {
+                result.Targets.AddRange(targets);
+                plan.ExpectedEffect = "Renderer " + targets.Count + " 個の光を色のテクスチャへ直接焼き込み（元の色のテクセル密度に合わせた新しいテクスチャ、最大 " +
+                                      context.Settings.atlasMaxSize + "、Unlit、強度 " + context.Settings.lightBakeStrength.ToString("0.00") + "）";
+                return plan;
+            }
             try
             {
                 result.Pack = AtlasPacker.Pack(targets.Select(t => t.Source.size).ToList(), 2, context.Settings.lightBakeMaxSize);
@@ -187,6 +208,22 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
             var lightmaps = LightmapSettings.lightmaps;
             var decoded = new Dictionary<int, (Color[] px, int w, int h)>();
+            if (settings.lightBakeTarget == LightBakeTarget.IntoTexture)
+            {
+                (Color[] px, int w, int h) Lightmap(int index)
+                {
+                    if (!decoded.TryGetValue(index, out var lm))
+                    {
+                        var tex = lightmaps[index].lightmapColor;
+                        decoded[index] = lm = (ReadLightmap(tex, linear), tex.width, tex.height);
+                    }
+                    return lm;
+                }
+                var targets = data.Targets.Select(t => new LightmapDirectBaker.Target { Info = t.Info, LightmapIndex = t.LightmapIndex, ScaleOffset = t.ScaleOffset }).ToList();
+                var baked = LightmapDirectBaker.Execute(gen, targets, Lightmap, Id);
+                gen.Log.Info(Id, "Renderer " + targets.Count + " 個の光を色のテクスチャ（" + baked.x + "x" + baked.y + "）へ直接焼き込みました（ライトマップ " + decoded.Count + " 枚から）。");
+                return;
+            }
             var sources = new List<AtlasComposer.Source>();
             for (int i = 0; i < data.Targets.Count; i++)
             {
@@ -426,9 +463,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 if (clone == null) continue; // 後続の結合で削除済み（検証は焼き込み直後に行う）
                 var mesh = clone.GetComponent<MeshFilter>()?.sharedMesh;
                 var uv = new List<Vector2>();
-                mesh?.GetUVs(1, uv);
-                if (mesh == null || uv.Count != mesh.vertexCount) result.Fail(t.Info.Key + ": 光テクスチャ用の UV1 がありません。");
-                else if (uv.Any(u => u.x < -1e-3f || u.y < -1e-3f || u.x > 1.001f || u.y > 1.001f)) result.Fail(t.Info.Key + ": UV1 が光テクスチャの範囲外です。");
+                // 直接焼き込みは UV0、光テクスチャは UV1 が焼き込んだテクスチャの配置
+                int channel = gen.Settings.lightBakeTarget == LightBakeTarget.IntoTexture ? 0 : 1;
+                mesh?.GetUVs(channel, uv);
+                if (mesh == null || uv.Count != mesh.vertexCount) result.Fail(t.Info.Key + ": 焼き込んだテクスチャ用の UV" + channel + " がありません。");
+                else if (uv.Any(u => u.x < -1e-3f || u.y < -1e-3f || u.x > 1.001f || u.y > 1.001f)) result.Fail(t.Info.Key + ": UV" + channel + " が焼き込んだテクスチャの範囲外です。");
                 if ((GameObjectUtility.GetStaticEditorFlags(clone.gameObject) & StaticEditorFlags.ContributeGI) != 0) result.Fail(t.Info.Key + ": Contribute GI が残っています。");
             }
             return result;

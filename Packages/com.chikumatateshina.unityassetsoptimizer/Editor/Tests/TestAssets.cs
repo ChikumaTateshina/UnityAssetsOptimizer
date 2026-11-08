@@ -109,6 +109,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             foreach (var def in FeatureCatalog.All) settings.SetMode(def.Id, ExecutionMode.Off);
             foreach (var f in features) settings.SetMode(f, ExecutionMode.Auto);
             settings.visualDiff = false;
+            settings.exportFbx = false; // FBX の保存は FbxExportTests で確かめる（FBX Exporter の有無で結果が変わらないように）
             return settings;
         }
 

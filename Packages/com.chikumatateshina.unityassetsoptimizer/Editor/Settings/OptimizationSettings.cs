@@ -53,6 +53,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public int atlasMaxSize = 4096;
         public int atlasPadding = 8;
         [Header("Lightmap Bake")]
+        /// <summary>焼き込み先（既定は色のテクスチャへ直接）。</summary>
+        public LightBakeTarget lightBakeTarget = LightBakeTarget.IntoTexture;
         public LightBakeShaderMode lightBakeShaderMode = LightBakeShaderMode.Unlit;
         /// <summary>焼き込む光の強度（0 = 焼き込まない、1 = ライトマップのまま）。Unlit / lilToon は Material で後から調整できる。</summary>
         [Range(0f, 1f)] public float lightBakeStrength = 1f;
@@ -105,6 +107,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public PrefabOutputMode outputMode = PrefabOutputMode.VariantWhenPossible;
         /// <summary>生成物（Prefab・Material・Mesh・Texture 等）の出力先（Assets 配下）。空なら実行フォルダ内。Manifest・スナップショット・レポートは常に管理フォルダに置く。</summary>
         public string prefabOutputFolder = string.Empty;
+        /// <summary>変換結果を FBX でも保存し、静的メッシュは FBX 内のメッシュを使う（FBX Exporter がある場合。Blender 等で編集可能）。</summary>
+        public bool exportFbx = true;
         /// <summary>同じ対象を再変換したら、前回の出力（Prefab は GUID を保って）を上書きする。</summary>
         public bool overwritePreviousOutput = true;
         /// <summary>隔離プレビューで前後をレンダリングし、画像差分を参考値として記録する。</summary>
@@ -179,6 +183,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var copy = Clone();
             copy.prefabOutputFolder = string.Empty;
             copy.overwritePreviousOutput = true;
+            copy.exportFbx = true;
             return HashUtility.Sha256(JsonUtility.ToJson(copy));
         }
 

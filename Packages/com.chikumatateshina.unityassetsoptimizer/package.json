@@ -1,7 +1,7 @@
 {
   "name": "com.chikumatateshina.unityassetsoptimizer",
   "displayName": "UnityAssetsOptimizer",
-  "version": "0.13.1",
+  "version": "0.14.0",
   "unity": "2022.3",
   "description": "Non-destructive asset optimizer for VRChat worlds and avatars: texture atlas (incl. lilToon / Poiyomi), material/mesh merge, texture compression, decimation/LOD, Android/iOS variants, VRChat SDK official rank, NDMF build-time mode, with snapshot-based restore and before/predicted/after metrics.",
   "author": {
