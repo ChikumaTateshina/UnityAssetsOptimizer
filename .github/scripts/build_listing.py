@@ -30,9 +30,18 @@ def api(url, token):
         return json.load(res)
 
 
-def download(url):
-    with urllib.request.urlopen(url) as res:
-        return res.read()
+def download(asset, token):
+    # API のアセット取得を優先する（github.com/.../releases/download が一時的に 504 を返すことがある）
+    req = urllib.request.Request(asset["url"], headers={"Accept": "application/octet-stream"})
+    if token:
+        req.add_header("Authorization", "Bearer " + token)
+    try:
+        with urllib.request.urlopen(req) as res:
+            return res.read()
+    except Exception as e:
+        print(f"API download failed for {asset['name']}: {e}; trying the browser URL", file=sys.stderr)
+        with urllib.request.urlopen(asset["browser_download_url"]) as res:
+            return res.read()
 
 
 def list_releases(repo, token):
@@ -56,7 +65,7 @@ def build(repo, token):
             asset_name = asset["name"]
             if not (asset_name.startswith(PACKAGE_NAME + "-") and asset_name.endswith(".zip")):
                 continue
-            data = download(asset["browser_download_url"])
+            data = download(asset, token)
             with zipfile.ZipFile(io.BytesIO(data)) as zf:
                 manifest = json.loads(zf.read("package.json").decode("utf-8-sig"))
             if manifest.get("name") != PACKAGE_NAME:
