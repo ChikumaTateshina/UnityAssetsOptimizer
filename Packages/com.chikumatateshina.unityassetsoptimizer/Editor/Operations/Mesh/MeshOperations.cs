@@ -209,6 +209,8 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 var target = renderers[0];
 
                 var sources = new List<MergeSource>();
+                var temporary = new List<Mesh>();
+                bool layoutLightmap = !group.Skinned && !group.LightBaked && !renderers.Any(r => EmptyObjectCleaner.UsesUv1(r.sharedMaterials));
                 foreach (var r in renderers)
                 {
                     var source = new MergeSource { Materials = r.sharedMaterials };
@@ -222,17 +224,35 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     {
                         source.Mesh = r.GetComponent<MeshFilter>().sharedMesh;
                         source.ToTarget = target.transform.worldToLocalMatrix * r.transform.localToWorldMatrix;
+                        // 展開済みのソースはそのまま（島を並べ直すだけ）。UV1 がない・壊れているソースだけ、そのソース単体で展開する
+                        if (layoutLightmap)
+                        {
+                            var prepared = LightmapUvLayout.PrepareSource(source.Mesh, LightmapUvLayout.WorldScale(r.transform), out bool unwrapped);
+                            if (unwrapped) temporary.Add(prepared);
+                            source.Mesh = prepared;
+                        }
                     }
                     sources.Add(source);
                 }
 
                 // 結合前にワールド境界を取得（スキンの localBounds 再計算用）
                 var worldBounds = renderers.Select(r => r.bounds).ToList();
-                var result = MeshMerger.Merge(sources, group.Skinned, target.name + "_combined");
-                // 各ソースのライトマップ UV が重ならないよう並べ直す（重なるとベイクした光が混ざる）。
+                // 一部のソースだけ展開すると頂点形式が揃わない（UV1 の有無・次元）。その場合は元のまま結合して全体を整える
+                if (temporary.Count > 0 && sources.Select(s => MeshMerger.AttributeSignature(s.Mesh)).Distinct().Count() > 1)
+                    for (int i = 0; i < sources.Count; i++) sources[i].Mesh = renderers[i].GetComponent<MeshFilter>().sharedMesh;
+                MergeResult result;
+                try
+                {
+                    result = MeshMerger.Merge(sources, group.Skinned, target.name + "_combined");
+                }
+                finally
+                {
+                    foreach (var m in temporary) Object.DestroyImmediate(m);
+                }
+                // 各ソースのライトマップ UV が重ならないよう、島の形と縦横比を保って並べ直す（重なるとベイクした光が混ざる）。
                 // 変換後にシーンで Static にしてベイクする使い方もあるため、Contribute GI の有無にかかわらず行う
-                if (!group.Skinned && !group.LightBaked)
-                    MeshMerger.PrepareLightmapUvs(result.Mesh, result.VertexOffsets);
+                if (layoutLightmap)
+                    LightmapUvLayout.Pack(result.Mesh, result.VertexOffsets, LightmapUvLayout.WorldScale(target.transform));
                 var mesh = gen.AddAsset(result.Mesh, "Meshes", result.Mesh.name, Id, string.Join(",", group.Members.Select(m => m.Key)));
 
                 if (target is SkinnedMeshRenderer targetSmr)
@@ -455,7 +475,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         }
     }
 
-    /// <summary>Lightmap UV（UV1）の再生成。World・MeshRenderer のみ。メッシュはコピーして変更する。</summary>
+    /// <summary>Lightmap UV（UV1）を整える。展開済みは保持し、島の重なりは並べ直し、ない・壊れたものだけ展開する。World・MeshRenderer のみ。メッシュはコピーして変更する。</summary>
     public sealed class LightmapUvOperation : OptimizationOperationBase
     {
         public override string Id => FeatureIds.LightmapUv;
@@ -479,9 +499,11 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                     analysis.Items.Add(PlanItem.Skip(label, SupportState.Unsupported, "ライトマップを焼き込んだ（UV1 は光テクスチャ用）"));
                 else if ((GameObjectUtility.GetStaticEditorFlags(info.Renderer.gameObject) & StaticEditorFlags.ContributeGI) == 0)
                     analysis.Items.Add(PlanItem.Skip(label, SupportState.Unsupported, "Contribute GI が無効（ライトマップ対象外）"));
-                else analysis.Items.Add(PlanItem.Supported(label, "UV1 を再生成（既存 UV1 は上書き）"));
+                else analysis.Items.Add(PlanItem.Supported(label, info.Mesh.HasVertexAttribute(VertexAttribute.TexCoord1)
+                    ? "展開済みの UV1 は保持（島が重なっていれば並べ直し、折り重なっていれば展開）"
+                    : "UV1 を自動展開"));
             }
-            analysis.Notes.Add("UV1 の再生成後はライトマップの再ベイクが必要です。");
+            analysis.Notes.Add("UV1 を変更したメッシュはライトマップの再ベイクが必要です。");
             return analysis;
         }
 
@@ -499,10 +521,21 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 var src = mf.sharedMesh;
                 if (!cache.TryGetValue(src, out var mesh))
                 {
+                    // 展開済みの UV1 は再展開しない（重なっている島を並べ直すだけ）。変更がなければ元のメッシュを使い続ける
                     mesh = gen.IsGenerated(src) ? src : Object.Instantiate(src);
-                    mesh.name = src.name + (gen.IsGenerated(src) ? string.Empty : "_lmuv");
-                    Unwrapping.GenerateSecondaryUVSet(mesh);
-                    if (!gen.IsGenerated(src)) mesh = gen.AddAsset(mesh, "Meshes", mesh.name, Id, MaterialEquivalence.StableId(src));
+                    var outcome = LightmapUvLayout.Ensure(mesh, LightmapUvLayout.WorldScale(r.transform));
+                    if (outcome == LightmapUvLayout.Outcome.Kept && !gen.IsGenerated(src))
+                    {
+                        Object.DestroyImmediate(mesh);
+                        mesh = src;
+                    }
+                    else if (!gen.IsGenerated(src))
+                    {
+                        mesh.name = src.name + "_lmuv";
+                        mesh = gen.AddAsset(mesh, "Meshes", mesh.name, Id, MaterialEquivalence.StableId(src));
+                    }
+                    gen.Log.Info(Id, src.name + ": " + (outcome == LightmapUvLayout.Outcome.Kept ? "展開済みの UV1 をそのまま使用" :
+                        outcome == LightmapUvLayout.Outcome.Repacked ? "UV1 の島の重なりを解消（展開はそのまま）" : "UV1 を自動展開"));
                     cache[src] = mesh;
                 }
                 mf.sharedMesh = mesh;

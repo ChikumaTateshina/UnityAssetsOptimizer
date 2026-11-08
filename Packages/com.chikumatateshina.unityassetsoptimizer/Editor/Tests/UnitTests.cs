@@ -76,15 +76,48 @@ namespace ChikumaTateshina.UnityAssetsOptimizer.Tests
             var sizes = new List<Vector2Int> { new Vector2Int(1024, 1024), new Vector2Int(1024, 1024), new Vector2Int(1024, 1024), new Vector2Int(512, 512), new Vector2Int(256, 256) };
             var r = AtlasPacker.Pack(sizes, 8, 4096);
             Assert.AreEqual(4096, r.Width);
-            Assert.GreaterOrEqual(r.FillRatio, 0.9f, "fill " + r.FillRatio);
+            // 縦横比を保つため、引き伸ばして埋めていた以前（0.9 以上）より少し下がる
+            Assert.GreaterOrEqual(r.FillRatio, 0.85f, "fill " + r.FillRatio);
         }
 
         [Test]
         public void PackChoosesSmallestSquareWithoutShrinking()
         {
             var r = AtlasPacker.Pack(new List<Vector2Int> { new Vector2Int(512, 512), new Vector2Int(512, 512) }, 0, 4096);
-            Assert.AreEqual(1024, r.Width, "1024 fits both at native size");
+            Assert.AreEqual(1024, System.Math.Max(r.Width, r.Height), "1024 fits both at native size");
+            Assert.AreEqual(512, System.Math.Min(r.Width, r.Height), "the unused half is cut off instead of stretching the textures");
             Assert.GreaterOrEqual(r.FillRatio, 0.99f);
+        }
+
+        [Test]
+        public void PackKeepsAspectRatio()
+        {
+            var sizes = new List<Vector2Int> { new Vector2Int(300, 100), new Vector2Int(100, 300), new Vector2Int(200, 200), new Vector2Int(64, 16) };
+            var r = AtlasPacker.Pack(sizes, 2, 2048);
+            for (int i = 0; i < sizes.Count; i++)
+            {
+                float expected = (float)sizes[i].x / sizes[i].y, actual = (float)r.Rects[i].width / r.Rects[i].height;
+                Assert.AreEqual(expected, actual, expected * 0.05f, "aspect of " + sizes[i] + " -> " + r.Rects[i]);
+            }
+        }
+
+        [Test]
+        public void ChartPackerKeepsAspectAndDoesNotOverlap()
+        {
+            var sizes = new List<Vector2> { new Vector2(4, 1), new Vector2(1, 1), new Vector2(0.5f, 2), new Vector2(0.01f, 0.01f) };
+            for (int n = 0; n < 40; n++) sizes.Add(new Vector2(0.1f + n % 7 * 0.05f, 0.1f + n % 3 * 0.1f));
+            var r = ChartPacker.Pack(sizes, 4, 1024);
+            for (int i = 0; i < sizes.Count; i++)
+            {
+                var a = r.Rects[i];
+                Assert.IsTrue(a.xMin >= 0 && a.yMin >= 0 && a.xMax <= 1024 && a.yMax <= 1024, "inside: " + a);
+                float w = r.Rotated[i] ? a.height : a.width, h = r.Rotated[i] ? a.width : a.height;
+                Assert.GreaterOrEqual(w, sizes[i].x * r.Scale - 0.01f);
+                Assert.GreaterOrEqual(h, sizes[i].y * r.Scale - 0.01f);
+                var padded = new RectInt(a.x - 4, a.y - 4, a.width + 8, a.height + 8);
+                for (int j = i + 1; j < sizes.Count; j++)
+                    Assert.IsFalse(padded.Overlaps(r.Rects[j]), "charts " + i + " and " + j + " overlap");
+            }
         }
 
         [Test]

@@ -57,7 +57,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             Def(FeatureIds.ColliderSimplify, "Collider簡略化", false, null, 4, "Phase 4"),
             Def(FeatureIds.StaticBatching, "Static Batching支援", true, null, 3, "競合判定"),
             Def(FeatureIds.GpuInstancing, "GPU Instancing支援", true, false, 3, "競合判定"),
-            Def(FeatureIds.LightmapUv, "Lightmap UV再生成", false, null, 3, "ベイクへの影響"),
+            Def(FeatureIds.LightmapUv, "Lightmap UV の整備", false, null, 3, "ベイクへの影響"),
             Def(FeatureIds.LightmapBake, "ライトマップ焼き込み", false, null, 3, "Bakery / Progressive のライトマップを色のテクスチャへ直接、または光テクスチャ（UV1）として焼き込む（シーン上のオブジェクトのみ）"),
             Def(FeatureIds.ShaderReplace, "Shader自動置換", false, false, 3, "Mobile Conversion で提供"),
             Def(FeatureIds.AaoTraceAndOptimize, "AAO Trace And Optimize（ビルド時）", null, true, 3, "Avatar Optimizer（anatawa12）が必要。BlendShape・未使用オブジェクト/ボーン・PhysBone・Animator を最適化"),

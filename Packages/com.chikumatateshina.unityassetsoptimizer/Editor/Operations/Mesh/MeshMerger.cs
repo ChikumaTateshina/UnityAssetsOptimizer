@@ -329,72 +329,9 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         }
 
         /// <summary>
-        /// 静的結合したメッシュのライトマップ UV（UV1）を、ソースごとに重ならないよう並べ直す。
-        /// 各ソースの UV1（ソース単体では重ならない）を、使用範囲の縦横比を保ち、面積（結合先空間）に比例した大きさの区画へ詰める。
+        /// 静的結合したメッシュのライトマップ UV（UV1）を、ソースごとに重ならないよう並べ直す（島の形と縦横比は保つ。<see cref="LightmapUvLayout.Pack"/>）。
         /// UV1 がない場合は Unity のライトマップ UV 自動生成で作る。そのままだと各ソースの UV1 が重なり、ベイクした光が混ざる。
         /// </summary>
-        public static void PrepareLightmapUvs(Mesh mesh, int[] vertexOffsets)
-        {
-            if (!mesh.HasVertexAttribute(VertexAttribute.TexCoord1))
-            {
-                UnityEditor.Unwrapping.GenerateSecondaryUVSet(mesh);
-                return;
-            }
-            var uv = new List<Vector2>();
-            mesh.GetUVs(1, uv);
-            var positions = new List<Vector3>();
-            mesh.GetVertices(positions);
-            int count = vertexOffsets.Length;
-            int End(int s) => s + 1 < count ? vertexOffsets[s + 1] : positions.Count;
-            int SourceOf(int v)
-            {
-                int s = Array.BinarySearch(vertexOffsets, v);
-                if (s < 0) s = ~s - 1;
-                while (s + 1 < count && vertexOffsets[s + 1] == v) s++; // 頂点のないソースを飛ばす
-                return s;
-            }
-
-            var area = new double[count];
-            for (int sm = 0; sm < mesh.subMeshCount; sm++)
-            {
-                var tris = mesh.GetTriangles(sm);
-                for (int t = 0; t + 2 < tris.Length; t += 3)
-                {
-                    var a = positions[tris[t]];
-                    area[SourceOf(tris[t])] += Vector3.Cross(positions[tris[t + 1]] - a, positions[tris[t + 2]] - a).magnitude * 0.5;
-                }
-            }
-            double total = Math.Max(1e-12, area.Sum());
-            var bounds = new Rect[count];
-            var sizes = new List<Vector2>();
-            const float virtualSize = 1024f;
-            for (int s = 0; s < count; s++)
-            {
-                float minX = float.MaxValue, minY = float.MaxValue, maxX = float.MinValue, maxY = float.MinValue;
-                for (int v = vertexOffsets[s]; v < End(s); v++)
-                {
-                    minX = Math.Min(minX, uv[v].x); minY = Math.Min(minY, uv[v].y);
-                    maxX = Math.Max(maxX, uv[v].x); maxY = Math.Max(maxY, uv[v].y);
-                }
-                if (minX > maxX) { minX = minY = 0; maxX = maxY = 1; }
-                float w = Math.Max(1e-4f, maxX - minX), h = Math.Max(1e-4f, maxY - minY);
-                bounds[s] = new Rect(minX, minY, w, h);
-                // 面積に比例した区画（縦横比は UV の使用範囲に合わせる）
-                float side = (float)Math.Sqrt(area[s] / total) * virtualSize;
-                float k = (float)Math.Sqrt(w * h);
-                sizes.Add(new Vector2(Math.Max(4f, side * w / k), Math.Max(4f, side * h / k)));
-            }
-            var pack = AtlasPacker.Pack(sizes, 4, 4096);
-            for (int s = 0; s < count; s++)
-            {
-                var r = pack.Rects[s];
-                var b = bounds[s];
-                for (int v = vertexOffsets[s]; v < End(s); v++)
-                    uv[v] = new Vector2(
-                        (r.x + (uv[v].x - b.x) / b.width * r.width) / pack.Width,
-                        (r.y + (uv[v].y - b.y) / b.height * r.height) / pack.Height);
-            }
-            mesh.SetUVs(1, uv);
-        }
+        public static void PrepareLightmapUvs(Mesh mesh, int[] vertexOffsets) => LightmapUvLayout.Pack(mesh, vertexOffsets);
     }
 }

@@ -64,7 +64,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             var prepared = targets.Select(t => Prepare(gen, t, textureCache)).ToList();
 
             // 区画: ライトマップ UV の範囲を、元の色テクスチャのテクセル密度 × ワールド面積の画素数にする
-            var pack = AtlasPacker.Pack(prepared.Select(p => p.Size).ToList(), Padding, settings.atlasMaxSize);
+            var pack = AtlasPacker.Pack(prepared.Select(p => p.Size).ToList(), Padding, settings.atlasMaxSize, allowRectangle: false);
             int size = pack.Width;
             var color = new Color32[size * size];
             var covered = new bool[size * size];
@@ -127,9 +127,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             {
                 var p = prepared[i];
                 var r = pack.Rects[i];
-                var uv = p.UvLight.Select(u => new Vector2(
-                    (r.x + (u.x - p.LightBounds.x) / p.LightBounds.width * r.width) / size,
-                    (r.y + (u.y - p.LightBounds.y) / p.LightBounds.height * r.height) / size)).ToList();
+                var uv = p.UvLight.Select(u => Fit(p.LightBounds, r, u) / size).ToList();
                 var copy = Object.Instantiate(p.Mesh);
                 copy.name = p.Mesh.name + "_bakedlit";
                 copy.SetUVs(0, uv);
@@ -176,11 +174,21 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             }
             float minX = p.UvLight.Min(u => u.x), minY = p.UvLight.Min(u => u.y), maxX = p.UvLight.Max(u => u.x), maxY = p.UvLight.Max(u => u.y);
             p.LightBounds = new Rect(minX, minY, Math.Max(1e-5f, maxX - minX), Math.Max(1e-5f, maxY - minY));
-            // ライトマップ UV の範囲（縦横比）に、使用画素数ぶんの大きさを割り当てる（最小 16px）
+            // ライトマップ UV の範囲（縦横比）に、使用画素数ぶんの大きさを割り当てる（短い辺は最小 16px。縦横比は保つ）
             double pixels = Math.Max(256, texels);
-            double aspect = p.LightBounds.width / p.LightBounds.height;
-            p.Size = new Vector2((float)Math.Max(16, Math.Sqrt(pixels * aspect)), (float)Math.Max(16, Math.Sqrt(pixels / aspect)));
+            double aspect = Math.Max(1e-3, Math.Min(1e3, p.LightBounds.width / p.LightBounds.height));
+            double w = Math.Sqrt(pixels * aspect), h = Math.Sqrt(pixels / aspect);
+            double grow = Math.Max(1, 16 / Math.Min(w, h));
+            p.Size = new Vector2((float)(w * grow), (float)(h * grow));
             return p;
+        }
+
+        /// <summary>ライトマップ UV の範囲を、縦横比を保ったまま区画に収める（一律の倍率・区画の中央）。</summary>
+        static Vector2 Fit(Rect bounds, RectInt rect, Vector2 u)
+        {
+            float k = Math.Min(rect.width / bounds.width, rect.height / bounds.height);
+            float ox = rect.x + (rect.width - bounds.width * k) * 0.5f, oy = rect.y + (rect.height - bounds.height * k) * 0.5f;
+            return new Vector2(ox + (u.x - bounds.x) * k, oy + (u.y - bounds.y) * k);
         }
 
         static Vector2 Scale(Vector2 uv, Vector4 st) => new Vector2(uv.x * st.x + st.z, uv.y * st.y + st.w);
@@ -248,9 +256,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         static void Rasterize(Prepared p, RectInt rect, int size, (Color[] px, int w, int h) lightmap, float strength, bool linear, float emissionMax,
             Color32[] color, Color32[] emission, bool[] covered)
         {
-            Vector2 ToPixel(Vector2 u) => new Vector2(
-                rect.x + (u.x - p.LightBounds.x) / p.LightBounds.width * rect.width,
-                rect.y + (u.y - p.LightBounds.y) / p.LightBounds.height * rect.height);
+            Vector2 ToPixel(Vector2 u) => Fit(p.LightBounds, rect, u);
             float ToLinear(float v) => linear ? Mathf.GammaToLinearSpace(v) : v;
             float ToStored(float v) => linear ? Mathf.LinearToGammaSpace(Mathf.Clamp01(v)) : Mathf.Clamp01(v);
 

@@ -731,7 +731,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
                 int padding = gen.Settings.atlasPadding;
                 var realSources = Enumerable.Range(0, group.Materials.Count)
                     .Select(i => (src: group.Sources[group.Materials[i]][channel.Property], rect: pack.Rects[i])).Where(x => !x.src.Solid).ToList();
-                while (shift < 6 && (padding >> (shift + 1)) >= 1 && pack.Width >> (shift + 1) >= 16 &&
+                while (shift < 6 && (padding >> (shift + 1)) >= 1 && Math.Min(pack.Width, pack.Height) >> (shift + 1) >= 16 &&
                        realSources.All(x => x.rect.width >> (shift + 1) >= x.src.Width && x.rect.height >> (shift + 1) >= x.src.Height))
                     shift++;
                 int width = pack.Width >> shift, height = pack.Height >> shift, channelPadding = padding >> shift;

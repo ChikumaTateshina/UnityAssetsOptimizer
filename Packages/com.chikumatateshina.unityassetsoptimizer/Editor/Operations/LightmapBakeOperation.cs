@@ -250,7 +250,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             lightTexture.Apply(false, false);
             var record = new GeneratedTexture { OperationId = Id, SourceRef = "lightmaps:" + string.Join(",", decoded.Keys), HasAlpha = false };
             record.Import.SRgb = true;
-            record.Import.MaxSize = pack.Width;
+            record.Import.MaxSize = Math.Max(pack.Width, pack.Height);
             var savedLight = gen.AddTexture(lightTexture, record, "BakedLight");
 
             var converted = new Dictionary<Material, Material>();

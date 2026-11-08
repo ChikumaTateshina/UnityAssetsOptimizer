@@ -11,7 +11,7 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
         public int Height;
         /// <summary>全要素へ一律に掛けた倍率（1 = 等倍、1 未満は最大サイズに収めるための縮小、1 超は余白を埋めるための拡大）。</summary>
         public float Scale;
-        /// <summary>入力順に対応する配置矩形（パディングを含まない内側の矩形）。余白を埋めるため縦横の倍率が異なる場合がある。</summary>
+        /// <summary>入力順に対応する配置矩形（パディングを含まない内側の矩形）。縦横比は入力と同じ（整数への丸めの誤差のみ）。</summary>
         public RectInt[] Rects;
         /// <summary>キャンバスのうち領域（パディングを含む）が占める割合。</summary>
         public float FillRatio;
@@ -19,15 +19,16 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
     /// <summary>
     /// 決定的なアトラスパッカー（MaxRects・Best Short Side Fit）。同じ入力からは常に同じレイアウトを返す。
-    /// 元の解像度を落とさずに収まる最小の 2 のべき乗の正方形を選び（最大サイズに収まらなければ一律に縮小）、
-    /// 一律の倍率を二分探索で最大化したうえで、残った余白へ各領域を広げてキャンバス全体を使う。
+    /// 元の解像度を落とさずに収まる最小の 2 のべき乗の正方形を選び（最大サイズに収まらなければ一律に縮小）、半分以上空く辺は縮め、
+    /// 一律の倍率を二分探索で最大化したうえで、残った余白へ各領域を縦横比を保って広げる。
     /// </summary>
     public static class AtlasPacker
     {
-        public static AtlasPackResult Pack(IList<Vector2Int> sizes, int padding, int maxSize) =>
-            Pack(sizes.Select(s => (Vector2)s).ToList(), padding, maxSize);
+        public static AtlasPackResult Pack(IList<Vector2Int> sizes, int padding, int maxSize, bool allowRectangle = true) =>
+            Pack(sizes.Select(s => (Vector2)s).ToList(), padding, maxSize, allowRectangle);
 
-        public static AtlasPackResult Pack(IList<Vector2> sizes, int padding, int maxSize)
+        /// <param name="allowRectangle">縦横比を保つと正方形の半分以上が空く場合、キャンバスを 2:1 等の長方形に縮める（使わない領域にメモリを使わない）。</param>
+        public static AtlasPackResult Pack(IList<Vector2> sizes, int padding, int maxSize, bool allowRectangle = true)
         {
             if (sizes == null || sizes.Count == 0) throw new ArgumentException("パック対象がありません。");
             if (maxSize < 1) throw new ArgumentException("maxSize が不正です。");
@@ -63,12 +64,19 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
             if (best == null || bestScale < 1f / 64f)
                 throw new InvalidOperationException("アトラスに収まりません（最大サイズ " + maxSize + "）。");
 
-            Expand(best, padding, canvas);
+            int width = canvas, height = canvas;
+            if (allowRectangle)
+            {
+                int usedW = best.Max(r => r.xMax + padding), usedH = best.Max(r => r.yMax + padding);
+                while (height > 1 && height / 2 >= usedH) height /= 2;
+                while (width > 1 && width / 2 >= usedW) width /= 2;
+            }
+            Expand(best, padding, width, height);
             long used = best.Sum(r => (long)(r.width + padding * 2) * (r.height + padding * 2));
             return new AtlasPackResult
             {
-                Width = canvas, Height = canvas, Scale = bestScale, Rects = best,
-                FillRatio = (float)Math.Min(1.0, used / ((double)canvas * canvas)),
+                Width = width, Height = height, Scale = bestScale, Rects = best,
+                FillRatio = (float)Math.Min(1.0, used / ((double)width * height)),
             };
         }
 
@@ -137,25 +145,39 @@ namespace ChikumaTateshina.UnityAssetsOptimizer
 
         static bool Contains(RectInt a, RectInt b) => b.x >= a.x && b.y >= a.y && b.xMax <= a.xMax && b.yMax <= a.yMax;
 
-        /// <summary>各領域を右・上の空きへ広げる（他の領域とパディングを含めて重ならない範囲）。縮小はしない。</summary>
-        static void Expand(RectInt[] rects, int padding, int canvas)
+        /// <summary>
+        /// 各領域を右・上の空きへ、縦横比を保ったまま広げる（他の領域とパディングを含めて重ならない範囲）。縮小はしない。
+        /// テクスチャの縦横の比率が変わらないため、どの方向にも同じ細かさで表示される。
+        /// </summary>
+        static void Expand(RectInt[] rects, int padding, int width, int height)
         {
             var order = Enumerable.Range(0, rects.Length).OrderBy(i => rects[i].x + rects[i].y).ThenBy(i => i).ToList();
+            bool Fits(int i, RectInt r)
+            {
+                if (r.xMax > width - padding || r.yMax > height - padding) return false;
+                var grown = new RectInt(r.x - padding, r.y - padding, r.width + padding * 2, r.height + padding * 2);
+                for (int j = 0; j < rects.Length; j++)
+                {
+                    if (j == i) continue;
+                    var o = new RectInt(rects[j].x - padding, rects[j].y - padding, rects[j].width + padding * 2, rects[j].height + padding * 2);
+                    if (grown.Overlaps(o)) return false;
+                }
+                return true;
+            }
             for (int pass = 0; pass < 2; pass++)
                 foreach (var i in order)
                 {
                     var r = rects[i];
-                    int limitX = canvas - padding;
-                    for (int j = 0; j < rects.Length; j++)
-                        if (j != i && rects[j].yMax + padding > r.y - padding && rects[j].y - padding < r.yMax + padding && rects[j].x >= r.xMax)
-                            limitX = Math.Min(limitX, rects[j].x - padding * 2);
-                    r.width = Math.Max(r.width, limitX - r.x);
-                    int limitY = canvas - padding;
-                    for (int j = 0; j < rects.Length; j++)
-                        if (j != i && rects[j].xMax + padding > r.x - padding && rects[j].x - padding < r.xMax + padding && rects[j].y >= r.yMax)
-                            limitY = Math.Min(limitY, rects[j].y - padding * 2);
-                    r.height = Math.Max(r.height, limitY - r.y);
-                    rects[i] = r;
+                    RectInt Grow(double f) => new RectInt(r.x, r.y, (int)Math.Floor(r.width * f), (int)Math.Floor(r.height * f));
+                    double lo = 1, hi = Math.Max(1, (double)(width - r.x) / Math.Max(1, r.width));
+                    for (int iter = 0; iter < 20; iter++)
+                    {
+                        double mid = (lo + hi) / 2;
+                        if (Fits(i, Grow(mid))) lo = mid;
+                        else hi = mid;
+                    }
+                    var best = Grow(lo);
+                    if (best.width >= r.width && best.height >= r.height) rects[i] = best;
                 }
         }
 
